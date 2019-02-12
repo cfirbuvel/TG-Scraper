@@ -1,13 +1,11 @@
 import os
 
 from telethon import TelegramClient, sync
-from telethon.errors.rpcerrorlist import ApiIdInvalidError, PhoneCodeInvalidError, PhoneCodeExpiredError
+from telethon.errors.rpcerrorlist import ApiIdInvalidError, PhoneCodeInvalidError, PhoneCodeExpiredError, \
+    ChannelPrivateError
 from telethon.tl.functions.messages import GetDialogsRequest
 from telethon.tl.types import InputPeerEmpty
-from telethon.tl.functions.messages import GetHistoryRequest
-from telethon.tl.types import PeerUser, PeerChat, PeerChannel, MessageEmpty, MessageService, InputChannel, \
-    InputPeerChannel, InputUser
-from telethon.tl.functions.messages import ForwardMessagesRequest
+from telethon.tl.types import InputChannel, InputPeerChannel, InputUser
 from telethon.tl.functions.channels import GetParticipantsRequest
 from telethon.tl.types import ChannelParticipantsSearch
 from telethon.tl.functions.channels import InviteToChannelRequest
@@ -15,7 +13,7 @@ from telethon.tl.functions.channels import InviteToChannelRequest
 from time import sleep
 
 
-from bot_models import Account
+from bot_models import Account, db, reload_db
 from bot_helpers import read_config, get_redis_key
 
 # Telegram login
@@ -27,6 +25,16 @@ class BotResp:
     EXIT = 2
 
 
+def escape_markdown(msg):
+    msg = msg.replace("_", "\\_").replace("*", "\\*").replace("[", "\\[").replace("`", "\\`")
+    return msg
+
+
+def disconnect_clients(clients):
+    for client in clients:
+        client.disconnect()
+
+
 def scrape_process(session):
     i = 0
     clients = []
@@ -34,7 +42,7 @@ def scrape_process(session):
     sessions_dir = os.path.abspath(config['sessions_dir'])
     if not os.path.isdir(sessions_dir):
         os.mkdir(sessions_dir)
-    for acc in Account:
+    for acc in Account.select():
         api_id = acc.api_id
         api_hash = acc.api_hash
         phone = acc.phone
@@ -46,7 +54,7 @@ def scrape_process(session):
                 client.send_code_request(phone)
             except ApiIdInvalidError:
                 msg = 'API id or hash is not valid for user _{}_\n' \
-                      'User skipped.'.format(acc.username)
+                      'User skipped.'.format(escape_markdown(acc.username))
                 session.json_set('bot_msg', (BotResp.MSG, msg))
                 continue
             msg = 'Enter the code for({})\n' \
@@ -65,6 +73,7 @@ def scrape_process(session):
         clients.append(client)
     if not clients:
         msg = 'Please add users before starting scrape'
+        disconnect_clients(clients)
         session.json_set('bot_msg', (BotResp.EXIT, msg))
         return
 
@@ -101,7 +110,7 @@ def scrape_process(session):
         msg += '{} - {}\n'.format(i, g.title)
         i += 1
     msg += 'Choose a group to scrape members from. (Enter a Number): '
-    msg = msg.replace("_", "\\_").replace("*", "\\*").replace("[", "\\[").replace("`", "\\`")
+    msg = escape_markdown(msg)
 
     session.json_set('bot_msg', (BotResp.ACTION, msg))
     g_index = get_redis_key(session, 'scraper_msg')
@@ -113,7 +122,7 @@ def scrape_process(session):
         msg += '{} - {}\n'.format(i, g.title)
         i += 1
     msg += 'Choose a group or channel to add members. (Enter a Number): '
-    msg = msg.replace("_", "\\_").replace("*", "\\*").replace("[", "\\[").replace("`", "\\`")
+    msg = escape_markdown(msg)
     session.json_set('bot_msg', (BotResp.ACTION, msg))
     g_index = get_redis_key(session, 'scraper_msg')
     chat_id_to = targets[int(g_index)].id
@@ -130,6 +139,7 @@ def scrape_process(session):
             limit=chunk_size,
             hash=0
         ))
+        session.json_set('bot_msg', (BotResp.MSG, 'Scraping client _{}_ groups'.format(client.api_id)))
         chats.extend(result.chats)
         if result.messages:
             for msg in chats:
@@ -148,6 +158,7 @@ def scrape_process(session):
         sleep(1)
     if len(target_groups_from) != len(clients) or len(target_groups_to) != len(clients):
         msg = 'All accounts should be a member of both groups.'
+        disconnect_clients(clients)
         session.json_set('bot_msg', (BotResp.EXIT, msg))
         return
     groups_participants = []
@@ -156,11 +167,19 @@ def scrape_process(session):
         all_participants = []
         offset = 0
         limit = 100
+        target_group = target_groups_from[i]
+        group_title = escape_markdown(target_group.title)
+        session.json_set('bot_msg', (BotResp.MSG, 'Scraping «{}» group participants'.format(group_title)))
         while True:
-            participants = client(GetParticipantsRequest(
-                InputPeerChannel(target_groups_from[i].id, target_groups_from[i].access_hash),
-                ChannelParticipantsSearch(''), offset, limit, hash=0
-            ))
+            try:
+                participants = client(GetParticipantsRequest(
+                    InputPeerChannel(target_group.id, target_group.access_hash),
+                    ChannelParticipantsSearch(''), offset, limit, hash=0
+                ))
+            except ChannelPrivateError:
+                error_msg = 'User _{}_ don\'t have an access to «{}» group. Skipping group'.format(client.api_id, group_title)
+                session.json_set('bot_msg', (BotResp.MSG, error_msg))
+                break
             if not participants.users:
                 break
             all_participants.extend(participants.users)
@@ -174,7 +193,7 @@ def scrape_process(session):
         limit = 0
         members = []
         while True:
-            participants = client.invoke(GetParticipantsRequest(
+            participants = client(GetParticipantsRequest(
                 InputPeerChannel(target_groups_to[i].id, target_groups_to[i].access_hash),
                 ChannelParticipantsSearch(''),
                 offset, limit, hash=0
@@ -202,7 +221,7 @@ def scrape_process(session):
         try:
             msg = 'Adding {}'.format(userid)
             session.json_set('bot_msg', (BotResp.MSG, msg))
-            clients[int(i % len(clients))].invoke(InviteToChannelRequest(
+            clients[int(i % len(clients))](InviteToChannelRequest(
                 InputChannel(target_groups_to[int(i % len(clients))].id,
                              target_groups_to[int(i % len(clients))].access_hash),
                 [InputUser(userid, userhash)],
@@ -210,4 +229,5 @@ def scrape_process(session):
         except:
             pass
         i += 1
+    disconnect_clients(clients)
     session.json_set('bot_msg', (BotResp.EXIT, 'Completed!'))

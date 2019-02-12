@@ -30,6 +30,10 @@ class JsonRedis(redis.StrictRedis):
         value = json.dumps(value)
         return self.set(name, value)
 
+    def clear_keys(self, *args):
+        for key in args:
+            self.json_set(key, None)
+
 
 def get_redis_key(session, name):
     while True:

@@ -1,12 +1,11 @@
 import re
 import threading
-from queue import Queue
 
 from telegram import ParseMode
 
 from bot_enums import BotStates
 from bot_messages import BotMessages
-from bot_models import Account
+from bot_models import Account, db, reload_db
 import bot_keyboards as keyboards
 from bot_helpers import JsonRedis, get_redis_key
 from scraper import scrape_process, BotResp
@@ -42,6 +41,7 @@ def on_menu(bot, update, user_data):
     elif callback_data == 'start_scrape':
         query.answer()
         session = JsonRedis(host='localhost', port=6379, db=0)
+        session.clear_keys('bot_msg', 'scraper_msg')
         t = threading.Thread(target=scrape_process, args=(session,))
         t.start()
         while True:
@@ -58,6 +58,7 @@ def on_menu(bot, update, user_data):
                     del user_data['session']
                 except KeyError:
                     pass
+                session.clear_keys('bot_msg', 'scraper_msg')
                 reply_markup = keyboards.create_main_menu_keyboard()
                 bot.send_message(chat_id, BotMessages.MAIN, reply_markup=reply_markup)
                 return BotStates.BOT_MENU
@@ -68,7 +69,6 @@ def on_bot_scrape(bot, update, user_data):
     text = update.effective_message.text
     session = user_data['session']
     session.json_set('scraper_msg', text)
-    # q.join()
     while True:
         action, msg = get_redis_key(session, 'bot_msg')
         if action == BotResp.MSG:
@@ -80,9 +80,10 @@ def on_bot_scrape(bot, update, user_data):
         else:
             bot.send_message(chat_id, msg, parse_mode=ParseMode.MARKDOWN)
             try:
-                del user_data['queue']
+                del user_data['session']
             except KeyError:
                 pass
+            session.clear_keys('bot_msg', 'scraper_msg')
             reply_markup = keyboards.create_main_menu_keyboard()
             bot.send_message(chat_id, BotMessages.MAIN, reply_markup=reply_markup)
             return BotStates.BOT_MENU

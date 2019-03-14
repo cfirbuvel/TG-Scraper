@@ -10,6 +10,7 @@ def main():
     conversation_handler = ConversationHandler(
         entry_points=[
             CommandHandler('start', handlers.on_start),
+            CommandHandler('cancel', handlers.on_cancel, pass_user_data=True)
         ],
         states={
             BotStates.BOT_INIT: [
@@ -18,19 +19,29 @@ def main():
             BotStates.BOT_MENU: [
                 CallbackQueryHandler(handlers.on_menu, pass_user_data=True)
             ],
+            BotStates.BOT_SCRAPE_SELECT: [
+                CallbackQueryHandler(handlers.on_bot_scrape_select, pass_user_data=True)
+            ],
             BotStates.BOT_SCRAPE: [
                 MessageHandler(Filters.text, handlers.on_bot_scrape, pass_user_data=True)
             ],
+            BotStates.BOT_SCRAPE_STOP: [
+                CallbackQueryHandler(handlers.on_bot_scrape_stop, pass_user_data=True)
+            ],
             BotStates.BOT_USER_USERNAME: [
+                # CallbackQueryHandler(handlers.on_user_username, pass_user_data=True),
                 MessageHandler(Filters.text, handlers.on_user_username, pass_user_data=True)
             ],
             BotStates.BOT_USER_ID: [
+                # CallbackQueryHandler(handlers.on_user_id, pass_user_data=True),
                 MessageHandler(Filters.text, handlers.on_user_id, pass_user_data=True)
             ],
             BotStates.BOT_USER_HASH: [
+                # CallbackQueryHandler(handlers.on_user_hash, pass_user_data=True),
                 MessageHandler(Filters.text, handlers.on_user_hash, pass_user_data=True)
             ],
             BotStates.BOT_USER_PHONE: [
+                # CallbackQueryHandler(handlers.on_user_phone, pass_user_data=True),
                 MessageHandler(Filters.text, handlers.on_user_phone, pass_user_data=True)
             ],
             BotStates.BOT_USERS_LIST: [
@@ -42,7 +53,7 @@ def main():
         },
         fallbacks=[
             CommandHandler('start', handlers.on_start),
-
+            CommandHandler('cancel', handlers.on_cancel, pass_user_data=True)
         ],
     )
     config = helpers.read_config('config.ini')

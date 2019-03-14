@@ -1,5 +1,5 @@
 import math
-from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import InlineKeyboardMarkup, InlineKeyboardButton, KeyboardButton, ReplyKeyboardMarkup
 
 
 def create_main_menu_keyboard():
@@ -9,6 +9,28 @@ def create_main_menu_keyboard():
         [InlineKeyboardButton('Start scrape', callback_data='start_scrape')]
     ]
     return InlineKeyboardMarkup(reply_markup)
+
+
+def scrape_keyboard():
+    reply_markup = [
+        [InlineKeyboardButton('Scrape', callback_data='normal_scrape')],
+        [InlineKeyboardButton('Scrape every 24 hours', callback_data='scrape_24')]
+    ]
+    return InlineKeyboardMarkup(reply_markup)
+
+
+def create_back_btn():
+    reply_markup = [
+        [InlineKeyboardButton('↩ Back', callback_data='back')]
+    ]
+    return InlineKeyboardMarkup(reply_markup)
+
+
+def create_back_keyboard(one_time=True):
+    reply_markup = [
+        [KeyboardButton('↩ Back')]
+    ]
+    return ReplyKeyboardMarkup(reply_markup, one_time_keyboard=one_time, resize_keyboard=True)
 
 
 def create_user_list_keyboard(objects, page_num=1, page_len=15):
@@ -43,3 +65,34 @@ def create_selected_user_keyboard(user_id):
         [InlineKeyboardButton('↩ Back', callback_data='back|')]
     ]
     return InlineKeyboardMarkup(buttons)
+
+
+def scrape_not_completed_keyboard():
+    buttons = [
+        [InlineKeyboardButton('↩ Back', callback_data='back')],
+        [InlineKeyboardButton('❌ Cancel Scrape', callback_data='cancel')]
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+
+def create_phone_invalid_keyboard():
+    buttons = [
+        [KeyboardButton('Enter again')],
+        [KeyboardButton('Resend code')],
+        [KeyboardButton('Skip user')],
+        [KeyboardButton('❌ Cancel')]
+    ]
+    return ReplyKeyboardMarkup(buttons)
+
+
+def stop_scrape_keyboard():
+    buttons = [
+        [KeyboardButton('❌ Stop')]
+    ]
+    return ReplyKeyboardMarkup(buttons, one_time_keyboard=True, resize_keyboard=True)
+
+
+action_keyboards_map = {
+    'phone_invalid': create_phone_invalid_keyboard(),
+    'stop_scrape': stop_scrape_keyboard()
+}

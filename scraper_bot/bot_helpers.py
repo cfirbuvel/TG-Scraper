@@ -18,6 +18,20 @@ def init_db(config_name):
     return db
 
 
+def escape_markdown(msg):
+    msg = msg.replace("_", "\\_").replace("*", "\\*").replace("[", "\\[").replace("`", "\\`")
+    return msg
+
+
+class SessionKeys:
+    EXIT_THREAD = 1
+    BOT_MSG = 2
+    SCRAPER_MSG = 3
+    RUNNING = 4
+
+
+
+
 class JsonRedis(redis.StrictRedis):
 
     def json_get(self, name):
@@ -41,7 +55,37 @@ def get_redis_key(session, name):
         if value:
             session.json_set(name, None)
             return value
+        # if not value:
+        #     exit = get_exit_key(session)
+        #     if exit:
+        #         return
         time.sleep(0.5)
+
+
+def set_bot_msg(session, resp_enum, msg, keyboard_key=None):
+    key = SessionKeys.BOT_MSG
+    while True:
+        exists = session.json_get(key)
+        if not exists:
+            session.json_set(key, (resp_enum, msg, keyboard_key))
+            break
+        else:
+            time.sleep(0.5)
+
+
+def set_exit_key(session):
+    session.json_set(SessionKeys.EXIT_THREAD, True)
+
+
+def get_exit_key(session):
+    val = session.json_get(SessionKeys.EXIT_THREAD)
+    session.clear_keys(SessionKeys.EXIT_THREAD)
+    return val
+
+
+def clear_session(session):
+    session.clear_keys(SessionKeys.BOT_MSG, SessionKeys.SCRAPER_MSG, SessionKeys.EXIT_THREAD)
+
 
 
 

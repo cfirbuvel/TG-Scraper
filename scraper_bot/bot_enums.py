@@ -9,6 +9,8 @@ class BotStates:
     BOT_USERS_LIST = 6
     BOT_USER_SELECTED = 7
     BOT_SCRAPE = 8
+    BOT_SCRAPE_SELECT = 9
+    BOT_SCRAPE_STOP = 10
 
 
 class ThreadResponse:

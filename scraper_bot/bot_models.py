@@ -1,4 +1,4 @@
-from peewee import Model, CharField, IntegerField, OperationalError
+from peewee import Model, CharField, IntegerField, OperationalError, ForeignKeyField
 
 from bot_helpers import init_db
 
@@ -18,6 +18,17 @@ class Account(BaseModel):
     username = CharField(max_length=255, null=True, default=None)
 
 
+class Run(BaseModel):
+    run_hash = CharField()
+    group_from = IntegerField(null=True)
+    group_to = IntegerField(null=True)
+
+
+class ScrapedAccount(BaseModel):
+    run = ForeignKeyField(Run, on_delete='CASCADE', related_name='accounts', null=True)
+    user_id = IntegerField()
+
+
 def create_tables(db):
     try:
         db.connect()
@@ -27,6 +38,9 @@ def create_tables(db):
 
     db.create_tables(
         [
-            Account
+            Account,
+            Run,
+            ScrapedAccount,
+
         ], safe=True
     )

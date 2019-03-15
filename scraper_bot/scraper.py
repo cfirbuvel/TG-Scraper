@@ -5,7 +5,7 @@ import uuid
 
 from telethon import TelegramClient, sync
 from telethon.errors.rpcerrorlist import ApiIdInvalidError, PhoneCodeInvalidError, PhoneCodeExpiredError, \
-    ChannelPrivateError, FloodWaitError
+    ChannelPrivateError, FloodWaitError, UserBannedInChannelError
 from telethon.tl.functions.messages import GetDialogsRequest
 from telethon.tl.types import InputPeerEmpty
 from telethon.tl.types import InputChannel, InputPeerChannel, InputUser, InputPhoneContact
@@ -349,13 +349,13 @@ def scrape_process(user_data, run=None):
         pass
 
     i = 0
-    counter = 0
+    # counter = 0
     first_clients_participants = groups_participants[0]
     users_len = len(first_clients_participants)
     while True:
-        if counter == users_len:
+        if i == users_len:
             break
-        user = first_clients_participants[counter]
+        user = first_clients_participants[i]
         if user.id in memberIds:
             continue
         p_i = int(i % len(clients))
@@ -365,13 +365,12 @@ def scrape_process(user_data, run=None):
                 user_hash = usr.access_hash
                 if run:
                     if user_id in added_participants:
-                        counter += 1
                         i += 1
                         continue
         try:
             client, _, client_limit = clients[p_i]
             if client_limit >= 50:
-                i += 1
+                clients.pop(p_i)
                 continue
             msg = 'Adding {}'.format(user_id)
             set_bot_msg(session, BotResp.MSG, msg)
@@ -380,12 +379,12 @@ def scrape_process(user_data, run=None):
                              target_groups_to[int(i % len(clients))].access_hash),
                 [InputUser(user_id, user_hash)],
             ))
-        except FloodWaitError:
-            pass
+        except (FloodWaitError, UserBannedInChannelError):
+            clients.pop(p_i)
+            continue
         else:
             ScrapedAccount.create(user_id=user_id, run=run)
         i += 1
-        counter += 1
     disconnect_clients(clients)
     if run:
         now = datetime.datetime.now()

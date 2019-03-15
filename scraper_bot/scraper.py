@@ -5,7 +5,7 @@ import uuid
 
 from telethon import TelegramClient, sync
 from telethon.errors.rpcerrorlist import ApiIdInvalidError, PhoneCodeInvalidError, PhoneCodeExpiredError, \
-    ChannelPrivateError, FloodWaitError, UserBannedInChannelError
+    ChannelPrivateError, FloodWaitError, UserBannedInChannelError, ChannelInvalidError, UserPrivacyRestrictedError
 from telethon.tl.functions.messages import GetDialogsRequest
 from telethon.tl.types import InputPeerEmpty
 from telethon.tl.types import InputChannel, InputPeerChannel, InputUser, InputPhoneContact
@@ -353,7 +353,7 @@ def scrape_process(user_data, run=None):
     first_clients_participants = groups_participants[0]
     users_len = len(first_clients_participants)
     while True:
-        if i == users_len:
+        if i == users_len or not len(clients):
             break
         user = first_clients_participants[i]
         if user.id in memberIds:
@@ -368,8 +368,10 @@ def scrape_process(user_data, run=None):
                         i += 1
                         continue
         try:
-            client, _, client_limit = clients[p_i]
+            client, phone, client_limit = clients[p_i]
             if client_limit >= 50:
+                msg = 'Client {} has reached limit of 50 users.'.format(phone)
+                set_bot_msg(session, BotResp.MSG, msg)
                 clients.pop(p_i)
                 continue
             msg = 'Adding {}'.format(user_id)
@@ -379,7 +381,10 @@ def scrape_process(user_data, run=None):
                              target_groups_to[int(i % len(clients))].access_hash),
                 [InputUser(user_id, user_hash)],
             ))
-        except (FloodWaitError, UserBannedInChannelError):
+        except (FloodWaitError, UserBannedInChannelError, ChannelInvalidError, UserPrivacyRestrictedError) as ex:
+            msg = 'Client {} can\'t add user.\n'.format(ex)
+            msg += 'Reason: {}'.format(ex)
+            set_bot_msg(session, BotResp.MSG, msg)
             clients.pop(p_i)
             continue
         else:

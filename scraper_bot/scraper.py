@@ -212,7 +212,8 @@ def scrape_process(user_data, run=None):
             run.group_from = g_index
             run.save()
 
-    chat_id_from = groups[g_index].id
+    chat_from = groups[g_index]
+    chat_id_from = chat_from.id
 
     g_index = None
     if run:
@@ -235,7 +236,8 @@ def scrape_process(user_data, run=None):
             run.group_to = g_index
             run.save()
 
-    chat_id_to = targets[g_index].id
+    chat_to = targets[g_index]
+    chat_id_to = chat_to.id
 
     msg = 'Adding bots to groups'
     set_bot_msg(session, BotResp.MSG, msg)
@@ -248,14 +250,12 @@ def scrape_process(user_data, run=None):
         client(ImportContactsRequest([first_client_contact]))
         client_user = client.get_me()
         client_user = first_client.get_entity(client_user.id)
-        group = first_client.get_entity(chat_id_from)
-        target = first_client.get_entity(chat_id_to)
         first_client(InviteToChannelRequest(
-            group,
+            chat_from,
             [client_user]
         ))
         first_client(InviteToChannelRequest(
-            target,
+            chat_to,
             [client_user]
         ))
         first_client_limit += 2

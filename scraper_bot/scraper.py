@@ -164,30 +164,30 @@ def scrape_process(user_data, run=None):
             except:
                 pass
     sleep(1)
-    msg = 'Adding bots to groups'
-    set_bot_msg(session, BotResp.MSG, msg)
-    for counter, data in enumerate(clients[1:]):
-        client, phone, limit = data
-        name = str(counter)
-        client_contact = InputPhoneContact(client_id=0, phone=phone, first_name=name, last_name=name)
-        first_client(ImportContactsRequest([client_contact]))
-        first_client_contact = InputPhoneContact(client_id=0, phone=first_client_phone, first_name=name, last_name=name)
-        client(ImportContactsRequest([first_client_contact]))
-        client_user = client.get_me()
-        client_user = first_client.get_entity(client_user.id)
-        for group, target in zip(groups, targets):
-            if first_client_limit == 50:
-                clients[first_client_index][2] = first_client_limit
-                first_client, first_client_phone, first_client_limit = clients[first_client_index + 1]
-            first_client(InviteToChannelRequest(
-                group,
-                [client_user]
-            ))
-            first_client(InviteToChannelRequest(
-                group,
-                [client_user]
-            ))
-            first_client_limit += 2
+    # msg = 'Adding bots to groups'
+    # set_bot_msg(session, BotResp.MSG, msg)
+    # for counter, data in enumerate(clients[1:]):
+    #     client, phone, limit = data
+    #     name = str(counter)
+    #     client_contact = InputPhoneContact(client_id=0, phone=phone, first_name=name, last_name=name)
+    #     first_client(ImportContactsRequest([client_contact]))
+    #     first_client_contact = InputPhoneContact(client_id=0, phone=first_client_phone, first_name=name, last_name=name)
+    #     client(ImportContactsRequest([first_client_contact]))
+    #     client_user = client.get_me()
+    #     client_user = first_client.get_entity(client_user.id)
+    #     for group, target in zip(groups, targets):
+    #         if first_client_limit == 50:
+    #             clients[first_client_index][2] = first_client_limit
+    #             first_client, first_client_phone, first_client_limit = clients[first_client_index + 1]
+    #         first_client(InviteToChannelRequest(
+    #             group,
+    #             [client_user]
+    #         ))
+    #         first_client(InviteToChannelRequest(
+    #             group,
+    #             [client_user]
+    #         ))
+    #         first_client_limit += 2
 
             # client(JoinChannelRequest(group))
             # client(JoinChannelRequest(target))
@@ -236,6 +236,29 @@ def scrape_process(user_data, run=None):
             run.save()
 
     chat_id_to = targets[g_index].id
+
+    msg = 'Adding bots to groups'
+    set_bot_msg(session, BotResp.MSG, msg)
+    for counter, data in enumerate(clients[1:]):
+        client, phone, limit = data
+        name = str(counter)
+        client_contact = InputPhoneContact(client_id=0, phone=phone, first_name=name, last_name=name)
+        first_client(ImportContactsRequest([client_contact]))
+        first_client_contact = InputPhoneContact(client_id=0, phone=first_client_phone, first_name=name, last_name=name)
+        client(ImportContactsRequest([first_client_contact]))
+        client_user = client.get_me()
+        client_user = first_client.get_entity(client_user.id)
+        group = first_client.get_entity(chat_id_from)
+        target = first_client.get_entity(chat_id_to)
+        first_client(InviteToChannelRequest(
+            group,
+            [client_user]
+        ))
+        first_client(InviteToChannelRequest(
+            target,
+            [client_user]
+        ))
+        first_client_limit += 2
 
     target_groups_from = []
     target_groups_to = []

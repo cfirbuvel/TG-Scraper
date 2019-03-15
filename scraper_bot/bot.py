@@ -70,5 +70,4 @@ if __name__ == '__main__':
     create_tables(db)
     session = helpers.JsonRedis(host='localhost', port=6379, db=0)
     session.flushdb()
-    session.client_kill()
     main()

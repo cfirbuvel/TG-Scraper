@@ -2,7 +2,7 @@ from telegram.ext import CallbackQueryHandler, CommandHandler, ConversationHandl
 
 from bot_models import create_tables, db
 import bot_handlers as handlers
-import bot_helpers as helpers, clear_session, JsonRedis, SessionKeys
+import bot_helpers as helpers
 from bot_enums import BotStates
 
 
@@ -68,7 +68,7 @@ def main():
 
 if __name__ == '__main__':
     create_tables(db)
-    session = JsonRedis(host='localhost', port=6379, db=0)
+    session = helpers.JsonRedis(host='localhost', port=6379, db=0)
     session.flushdb()
     session.client_kill()
     main()

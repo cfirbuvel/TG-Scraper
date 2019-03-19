@@ -5,7 +5,8 @@ import uuid
 
 from telethon import TelegramClient, sync
 from telethon.errors.rpcerrorlist import ApiIdInvalidError, PhoneCodeInvalidError, PhoneCodeExpiredError, \
-    ChannelPrivateError, FloodWaitError, UserBannedInChannelError, ChannelInvalidError, UserPrivacyRestrictedError
+    ChannelPrivateError, FloodWaitError, UserBannedInChannelError, ChannelInvalidError, UserPrivacyRestrictedError, \
+    UserKickedError, ChatAdminRequiredError
 from telethon.tl.functions.messages import GetDialogsRequest
 from telethon.tl.types import InputPeerEmpty
 from telethon.tl.types import InputChannel, InputPeerChannel, InputUser, InputPhoneContact
@@ -164,33 +165,7 @@ def scrape_process(user_data, run=None):
             except:
                 pass
     sleep(1)
-    # msg = 'Adding bots to groups'
-    # set_bot_msg(session, BotResp.MSG, msg)
-    # for counter, data in enumerate(clients[1:]):
-    #     client, phone, limit = data
-    #     name = str(counter)
-    #     client_contact = InputPhoneContact(client_id=0, phone=phone, first_name=name, last_name=name)
-    #     first_client(ImportContactsRequest([client_contact]))
-    #     first_client_contact = InputPhoneContact(client_id=0, phone=first_client_phone, first_name=name, last_name=name)
-    #     client(ImportContactsRequest([first_client_contact]))
-    #     client_user = client.get_me()
-    #     client_user = first_client.get_entity(client_user.id)
-    #     for group, target in zip(groups, targets):
-    #         if first_client_limit == 50:
-    #             clients[first_client_index][2] = first_client_limit
-    #             first_client, first_client_phone, first_client_limit = clients[first_client_index + 1]
-    #         first_client(InviteToChannelRequest(
-    #             group,
-    #             [client_user]
-    #         ))
-    #         first_client(InviteToChannelRequest(
-    #             group,
-    #             [client_user]
-    #         ))
-    #         first_client_limit += 2
 
-            # client(JoinChannelRequest(group))
-            # client(JoinChannelRequest(target))
     g_index = None
     if run:
         g_index = run.group_from
@@ -250,15 +225,20 @@ def scrape_process(user_data, run=None):
         client(ImportContactsRequest([first_client_contact]))
         client_user = client.get_me()
         client_user = first_client.get_entity(client_user.id)
-        first_client(InviteToChannelRequest(
-            chat_from,
-            [client_user]
-        ))
-        first_client(InviteToChannelRequest(
-            chat_to,
-            [client_user]
-        ))
-        first_client_limit += 2
+        try:
+            first_client(InviteToChannelRequest(
+                chat_from,
+                [client_user]
+            ))
+            first_client_limit += 1
+            first_client(InviteToChannelRequest(
+                chat_to,
+                [client_user]
+            ))
+            first_client_limit += 1
+        except UserKickedError:
+            msg = 'User _{}_ was kicked from channel and cannot be added again.'.format(phone)
+            set_bot_msg(session, BotResp.MSG, msg)
 
     target_groups_from = []
     target_groups_to = []
@@ -381,12 +361,21 @@ def scrape_process(user_data, run=None):
                              target_groups_to[int(i % len(clients))].access_hash),
                 [InputUser(user_id, user_hash)],
             ))
-        except (FloodWaitError, UserBannedInChannelError, ChannelInvalidError, UserPrivacyRestrictedError) as ex:
-            msg = 'Client {} can\'t add user.\n'.format(ex)
+        except (FloodWaitError, UserBannedInChannelError, ChannelInvalidError) as ex:
+            msg = 'Client {} can\'t add user.\n'.format(phone)
             msg += 'Reason: {}'.format(ex)
             set_bot_msg(session, BotResp.MSG, msg)
             clients.pop(p_i)
             continue
+        except UserPrivacyRestrictedError as ex:
+            msg = 'Client {} can\'t add user.\n'.format(phone)
+            msg += 'Reason: {}'.format(ex)
+            set_bot_msg(session, BotResp.MSG, msg)
+        except ChatAdminRequiredError as ex:
+            msg = 'Script will stop.\n'
+            msg += 'Reason: {}'.format(ex)
+            set_bot_msg(session, BotResp.MSG, msg)
+            break
         else:
             ScrapedAccount.create(user_id=user_id, run=run)
         i += 1

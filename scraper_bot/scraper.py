@@ -6,7 +6,7 @@ import uuid
 from telethon import TelegramClient, sync
 from telethon.errors.rpcerrorlist import ApiIdInvalidError, PhoneCodeInvalidError, PhoneCodeExpiredError, \
     ChannelPrivateError, FloodWaitError, UserBannedInChannelError, ChannelInvalidError, UserPrivacyRestrictedError, \
-    UserKickedError, ChatAdminRequiredError
+    UserKickedError, ChatAdminRequiredError, PeerFloodError
 from telethon.tl.functions.messages import GetDialogsRequest
 from telethon.tl.types import InputPeerEmpty
 from telethon.tl.types import InputChannel, InputPeerChannel, InputUser, InputPhoneContact
@@ -347,22 +347,22 @@ def scrape_process(user_data, run=None):
                     if user_id in added_participants:
                         i += 1
                         continue
-        try:
-            client, phone, client_limit = clients[p_i]
-            if client_limit >= 50:
-                msg = 'Client {} has reached limit of 50 users.'.format(phone)
-                set_bot_msg(session, BotResp.MSG, msg)
-                clients.pop(p_i)
-                continue
-            msg = 'Adding {}'.format(user_id)
+        client, phone, client_limit = clients[p_i]
+        if client_limit >= 50:
+            msg = 'Client {} has reached limit of 50 users.'.format(phone)
             set_bot_msg(session, BotResp.MSG, msg)
+            clients.pop(p_i)
+            continue
+        msg = 'Adding {}'.format(user_id)
+        set_bot_msg(session, BotResp.MSG, msg)
+        try:
             client(InviteToChannelRequest(
                 InputChannel(target_groups_to[int(i % len(clients))].id,
                              target_groups_to[int(i % len(clients))].access_hash),
                 [InputUser(user_id, user_hash)],
             ))
-        except (FloodWaitError, UserBannedInChannelError, ChannelInvalidError) as ex:
-            msg = 'Client {} can\'t add user.\n'.format(phone)
+        except (FloodWaitError, UserBannedInChannelError, ChannelInvalidError, PeerFloodError) as ex:
+            msg = 'Client {} can\'t add user. Client skipped.\n'.format(phone)
             msg += 'Reason: {}'.format(ex)
             set_bot_msg(session, BotResp.MSG, msg)
             clients.pop(p_i)

@@ -353,6 +353,8 @@ def scrape_process(user_data, run=None):
             msg = 'Client {} has reached limit of 50 users.'.format(phone)
             set_bot_msg(session, BotResp.MSG, msg)
             clients.pop(p_i)
+            target_groups_to.pop(p_i)
+            groups_participants.pop(p_i)
             continue
         msg = 'Adding {}'.format(user_id)
         set_bot_msg(session, BotResp.MSG, msg)
@@ -368,8 +370,9 @@ def scrape_process(user_data, run=None):
             set_bot_msg(session, BotResp.MSG, msg)
             clients.pop(p_i)
             target_groups_to.pop(p_i)
+            groups_participants.pop(p_i)
             continue
-        except (UserPrivacyRestrictedError, ChannelInvalidError) as ex:
+        except (UserPrivacyRestrictedError) as ex:
             msg = 'Client {} can\'t add user.\n'.format(phone)
             msg += 'Reason: {}'.format(ex)
             set_bot_msg(session, BotResp.MSG, msg)

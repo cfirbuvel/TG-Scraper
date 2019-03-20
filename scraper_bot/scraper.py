@@ -59,6 +59,7 @@ def enter_confirmation_code_action(phone, session):
     set_bot_msg(session, BotResp.ACTION, msg, 'stop_scrape')
     code = get_redis_key(session, SessionKeys.SCRAPER_MSG)
     if code == '❌ Stop':
+        print('stop recieved')
         code = None
     else:
         code = code.replace(' ', '')
@@ -68,8 +69,8 @@ def enter_confirmation_code_action(phone, session):
 def send_code_sign_in(client, session, phone, username, code=None):
     if not code:
         code = send_confirmation_code(session, client, phone, username)
-    if not code:
-        return 'continue'
+    if code is None:
+        return
     try:
         client.sign_in(phone, code)
     except (PhoneCodeInvalidError, PhoneCodeExpiredError) as ex:
@@ -82,7 +83,7 @@ def send_code_sign_in(client, session, phone, username, code=None):
         resp = get_redis_key(session, SessionKeys.SCRAPER_MSG)
         if resp == 'Enter again':
             code = enter_confirmation_code_action(phone, session)
-            if not code:
+            if code is None:
                 return
             return send_code_sign_in(client, session, phone, username, code)
         elif resp == 'Resend code':
@@ -117,10 +118,10 @@ def scrape_process(user_data, run=None):
     for acc in Account.select():
         api_id = acc.api_id
         api_hash = acc.api_hash
-        session_path = os.path.join(sessions_dir, 'session{}'.format(acc.id))
+        phone = acc.phone
+        session_path = os.path.join(sessions_dir, '{}'.format(phone))
         client = TelegramClient(session_path, api_id, api_hash)
         client.connect()
-        phone = acc.phone
         username = acc.username
         if not client.is_user_authorized():
             resp = send_code_sign_in(client, session, phone, username)
@@ -357,17 +358,17 @@ def scrape_process(user_data, run=None):
         set_bot_msg(session, BotResp.MSG, msg)
         try:
             client(InviteToChannelRequest(
-                InputChannel(target_groups_to[int(i % len(clients))].id,
-                             target_groups_to[int(i % len(clients))].access_hash),
+                InputChannel(target_groups_to[p_i].id,
+                             target_groups_to[p_i].access_hash),
                 [InputUser(user_id, user_hash)],
             ))
-        except (FloodWaitError, UserBannedInChannelError, ChannelInvalidError, PeerFloodError) as ex:
+        except (FloodWaitError, UserBannedInChannelError, PeerFloodError) as ex:
             msg = 'Client {} can\'t add user. Client skipped.\n'.format(phone)
             msg += 'Reason: {}'.format(ex)
             set_bot_msg(session, BotResp.MSG, msg)
             clients.pop(p_i)
             continue
-        except UserPrivacyRestrictedError as ex:
+        except (UserPrivacyRestrictedError, ChannelInvalidError) as ex:
             msg = 'Client {} can\'t add user.\n'.format(phone)
             msg += 'Reason: {}'.format(ex)
             set_bot_msg(session, BotResp.MSG, msg)

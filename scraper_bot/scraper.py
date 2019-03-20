@@ -367,6 +367,7 @@ def scrape_process(user_data, run=None):
             msg += 'Reason: {}'.format(ex)
             set_bot_msg(session, BotResp.MSG, msg)
             clients.pop(p_i)
+            target_groups_to.pop(p_i)
             continue
         except (UserPrivacyRestrictedError, ChannelInvalidError) as ex:
             msg = 'Client {} can\'t add user.\n'.format(phone)

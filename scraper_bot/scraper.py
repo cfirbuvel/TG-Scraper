@@ -276,12 +276,12 @@ def scrape_process(user_data, run=None):
         stop_scrape(session, clients, run, msg)
         return
     groups_participants = []
-    i = 0
     if run:
         added_participants = ScrapedAccount.select(ScrapedAccount.user_id)\
             .where(ScrapedAccount.run == run).tuples()
         added_participants = [val[0] for val in added_participants]
-    for client, _, _ in clients:
+    for i, client_data in enumerate(clients):
+        client = client_data[0]
         all_participants = []
         offset = 0
         limit = 100
@@ -304,33 +304,27 @@ def scrape_process(user_data, run=None):
             all_participants.extend(participants.users)
             offset += len(participants.users)
             sleep(1)
-        i += 1
         groups_participants.append(all_participants)
-    try:
-        i = 0
-        offset = 0
-        limit = 0
-        members = []
-        while True:
-            participants = client(GetParticipantsRequest(
-                InputPeerChannel(target_groups_to[i].id, target_groups_to[i].access_hash),
+
+    offset = 0
+    limit = 0
+    memberIds = []
+    while True:
+        try:
+            participants = first_client(GetParticipantsRequest(
+                InputPeerChannel(target_groups_to[first_client_index].id, target_groups_to[first_client_index].access_hash),
                 ChannelParticipantsSearch(''),
                 offset, limit, hash=0
             ))
-            if not participants.users:
-                break
-            members.extend(participants.users)
-            offset += len(participants.users)
-            sleep(1)
-        memberIds = []
-        for member in members:
-            memberIds.append(member.id)
-    except:
-        memberIds = []
-        pass
+        except:
+            break
+        if not participants.users:
+            break
+        memberIds.extend((member.id for member in participants.users))
+        offset += len(participants.users)
+        sleep(1)
 
     i = 0
-    # counter = 0
     first_clients_participants = groups_participants[0]
     users_len = len(first_clients_participants)
     while True:
@@ -338,6 +332,7 @@ def scrape_process(user_data, run=None):
             break
         user = first_clients_participants[i]
         if user.id in memberIds:
+            i += 1
             continue
         p_i = int(i % len(clients))
         for usr in groups_participants[p_i]:

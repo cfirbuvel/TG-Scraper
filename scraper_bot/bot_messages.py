@@ -14,7 +14,7 @@ class BotMessages:
                     '_API id_: {api_id}\n' \
                     '_API hash_: {api_hash}\n' \
                     '_Phone number_: {phone}'
-    USER_DELETED = 'User _{}_ was deleted!'
+    USER_DELETED = 'User *{}* was deleted!'
     SCRAPE_STOPPED = 'Scrape will be stopped in 1 minute'
     SCRAPE_CANCELLED = 'Scrape process was cancelled.'
     SCRAPE = 'Scrape process'

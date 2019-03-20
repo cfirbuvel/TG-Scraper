@@ -22,6 +22,7 @@ from bot_helpers import read_config, get_redis_key, set_bot_msg, escape_markdown
 from bot_messages import BotMessages
 from bot_models import Account, ScrapedAccount, Run, db
 
+from pprint import pprint
 
 # Telegram login
 
@@ -36,9 +37,19 @@ def disconnect_clients(clients):
     for client, _, _ in clients:
         client.disconnect()
 
+def print_attrs(o):
+    for attr in dir(o):
+        if not attr.startswith('_'):
+            try:
+                print(attr, ':', getattr(o, attr))
+            except:
+                pass
+
+
 
 def send_confirmation_code(session, client, phone, username):
     try:
+        print('debug resent code')
         client.send_code_request(phone)
     except ApiIdInvalidError:
         msg = 'API id or hash is not valid for user _{}_\n' \
@@ -142,7 +153,7 @@ def scrape_process(user_data, run=None):
     chunk_size = 100
     groups = []
     targets = []
-    first_client_index = 0
+    first_client_index = -1
     first_client, first_client_phone, first_client_limit = clients[first_client_index]
     result = first_client(GetDialogsRequest(
         offset_date=last_date,
@@ -217,7 +228,7 @@ def scrape_process(user_data, run=None):
 
     msg = 'Adding bots to groups'
     set_bot_msg(session, BotResp.MSG, msg)
-    for counter, data in enumerate(clients[1:]):
+    for counter, data in enumerate(clients[:-1]):
         client, phone, limit = data
         name = str(counter)
         client_contact = InputPhoneContact(client_id=0, phone=phone, first_name=name, last_name=name)
@@ -242,9 +253,10 @@ def scrape_process(user_data, run=None):
             set_bot_msg(session, BotResp.MSG, msg)
 
     target_groups_from = []
-    target_groups_to = []
+    target_groups_to = {}
 
-    for client, _, _ in clients:
+    for i, client_data in enumerate(clients):
+        client = client_data[0]
         chats = []
         result = client(GetDialogsRequest(
             offset_date=last_date,
@@ -257,17 +269,15 @@ def scrape_process(user_data, run=None):
         set_bot_msg(session, BotResp.MSG, msg)
         chats.extend(result.chats)
         if result.messages:
-            for msg in chats:
-                try:
-                    mgg = msg.megagroup
-                except:
+            for chat in chats:
+                if not hasattr(chat, 'megagroup'):
                     continue
                 try:
-                    if msg.access_hash is not None:
-                        if msg.id == chat_id_from:
-                            target_groups_from.append(msg)
-                        if msg.id == chat_id_to:
-                            target_groups_to.append(msg)
+                    if chat.access_hash is not None:
+                        if chat.id == chat_id_from:
+                            target_groups_from.append(chat)
+                        if chat.id == chat_id_to:
+                            target_groups_to[i] = chat
                 except:
                     pass
         sleep(1)
@@ -275,14 +285,14 @@ def scrape_process(user_data, run=None):
         msg = 'All accounts should be a member of both groups.'
         stop_scrape(session, clients, run, msg)
         return
-    groups_participants = []
+    groups_participants = {}
     if run:
         added_participants = ScrapedAccount.select(ScrapedAccount.user_id)\
             .where(ScrapedAccount.run == run).tuples()
         added_participants = [val[0] for val in added_participants]
     for i, client_data in enumerate(clients):
         client = client_data[0]
-        all_participants = []
+        all_participants = {}
         offset = 0
         limit = 100
         target_group = target_groups_from[i]
@@ -301,10 +311,10 @@ def scrape_process(user_data, run=None):
                 break
             if not participants.users:
                 break
-            all_participants.extend(participants.users)
+            all_participants.update({user.id: user.access_hash for user in participants.users})
             offset += len(participants.users)
             sleep(1)
-        groups_participants.append(all_participants)
+        groups_participants[i] = all_participants
 
     offset = 0
     limit = 0
@@ -324,61 +334,59 @@ def scrape_process(user_data, run=None):
         offset += len(participants.users)
         sleep(1)
 
-    i = 0
     first_clients_participants = groups_participants[0]
-    users_len = len(first_clients_participants)
-    while True:
-        if i == users_len or not len(clients):
+    for i, user_id in enumerate(first_clients_participants):
+        if not len(clients):
             break
-        user = first_clients_participants[i]
-        if user.id in memberIds:
-            i += 1
+        if user_id in memberIds:
             continue
         p_i = int(i % len(clients))
-        for usr in groups_participants[p_i]:
-            if user.id == usr.id:
-                user_id = usr.id
-                user_hash = usr.access_hash
-                if run:
-                    if user_id in added_participants:
-                        i += 1
-                        continue
+        if run:
+            if user_id in added_participants:
+                continue
+        try:
+            user_hash = groups_participants[p_i][user_id]
+        except KeyError:
+            continue
+
         client, phone, client_limit = clients[p_i]
         if client_limit >= 50:
             msg = 'Client {} has reached limit of 50 users.'.format(phone)
             set_bot_msg(session, BotResp.MSG, msg)
             clients.pop(p_i)
-            target_groups_to.pop(p_i)
-            groups_participants.pop(p_i)
+            del target_groups_to[p_i]
+            del groups_participants[p_i]
             continue
         msg = 'Adding {}'.format(user_id)
         set_bot_msg(session, BotResp.MSG, msg)
         try:
+            print('adding user {}'.format(user_id))
             client(InviteToChannelRequest(
                 InputChannel(target_groups_to[p_i].id,
                              target_groups_to[p_i].access_hash),
                 [InputUser(user_id, user_hash)],
             ))
-        except (FloodWaitError, UserBannedInChannelError, PeerFloodError) as ex:
+        except (FloodWaitError, UserBannedInChannelError, PeerFloodError, ChatAdminRequiredError) as ex:
             msg = 'Client {} can\'t add user. Client skipped.\n'.format(phone)
             msg += 'Reason: {}'.format(ex)
             set_bot_msg(session, BotResp.MSG, msg)
             clients.pop(p_i)
-            target_groups_to.pop(p_i)
-            groups_participants.pop(p_i)
+            del target_groups_to[p_i]
+            del groups_participants[p_i]
             continue
         except (UserPrivacyRestrictedError) as ex:
             msg = 'Client {} can\'t add user.\n'.format(phone)
             msg += 'Reason: {}'.format(ex)
             set_bot_msg(session, BotResp.MSG, msg)
-        except ChatAdminRequiredError as ex:
-            msg = 'Script will stop.\n'
-            msg += 'Reason: {}'.format(ex)
-            set_bot_msg(session, BotResp.MSG, msg)
-            break
+        # except ChatAdminRequiredError as ex:
+        #     msg = 'Script will stop.\n'
+        #     msg += 'Reason: {}'.format(ex)
+        #     set_bot_msg(session, BotResp.MSG, msg)
+        #     break
         else:
-            ScrapedAccount.create(user_id=user_id, run=run)
-        i += 1
+            print('user {} added'.format(user_id))
+            if run:
+                ScrapedAccount.create(user_id=user_id, run=run)
     disconnect_clients(clients)
     if run:
         now = datetime.datetime.now()

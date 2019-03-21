@@ -356,7 +356,20 @@ def scrape_process(user_data, run=None):
 
     first_clients_participants = list(groups_participants[0].keys())
     i = 0
+    debug_file = open('debug.txt', 'w')
+    print('\n\ndebug participants', file=debug_file)
+    pprint(groups_participants, stream=debug_file)
+    print('\n\ndebug clients', file=debug_file)
+    pprint(clients, stream=debug_file)
+    print('\n\ndebug target groups', file=debug_file)
+    pprint(target_groups_to, stream=debug_file)
     while True:
+        print('\n\ndebug participants', file=debug_file)
+        pprint(groups_participants, stream=debug_file)
+        print('\n\ndebug clients', file=debug_file)
+        pprint(clients, stream=debug_file)
+        print('\n\ndebug target groups', file=debug_file)
+        pprint(target_groups_to, stream=debug_file)
         try:
             user_id = first_clients_participants[i]
         except IndexError:
@@ -370,14 +383,14 @@ def scrape_process(user_data, run=None):
         if run:
             if user_id in added_participants:
                 continue
+        print('\n\ndebug i: ', i, file=debug_file)
+        print('debug p_i: ', p_i, file=debug_file)
         try:
             user_hash = groups_participants[p_i][user_id]
         except KeyError:
             continue
 
         client, phone, client_limit = clients[p_i]
-        if random.randint(1, 3) == 1:
-           client_limit = 50
         if client_limit >= 50:
             msg = 'Client {} has reached limit of 50 users.'.format(phone)
             set_bot_msg(session, BotResp.MSG, msg)
@@ -409,6 +422,7 @@ def scrape_process(user_data, run=None):
             if run:
                 ScrapedAccount.create(user_id=user_id, run=run)
         i += 1
+    debug_file.close()
     disconnect_clients(clients)
     if run:
         now = datetime.datetime.now()

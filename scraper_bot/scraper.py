@@ -6,7 +6,7 @@ import uuid
 from telethon import TelegramClient, sync
 from telethon.errors.rpcerrorlist import ApiIdInvalidError, PhoneCodeInvalidError, PhoneCodeExpiredError, \
     ChannelPrivateError, FloodWaitError, UserBannedInChannelError, ChannelInvalidError, UserPrivacyRestrictedError, \
-    UserKickedError, ChatAdminRequiredError, PeerFloodError, ChatWriteForbiddenError
+    UserKickedError, ChatAdminRequiredError, PeerFloodError, ChatWriteForbiddenError, UserNotMutualContactError
 from telethon.tl.functions.messages import GetDialogsRequest
 from telethon.tl.types import InputPeerEmpty
 from telethon.tl.types import InputChannel, InputPeerChannel, InputUser, InputPhoneContact
@@ -44,7 +44,6 @@ def print_attrs(o):
                 print(attr, ':', getattr(o, attr))
             except:
                 pass
-
 
 
 def send_confirmation_code(session, client, phone, username):
@@ -257,13 +256,13 @@ def scrape_process(user_data, run=None):
     target_groups_from = []
     target_groups_to = {}
 
-    i = 0
-    while True:
-    #for i, client_data in enumerate(clients):
-        try:
-            client_data = clients[i]
-        except IndexError:
-            break
+    # i = 0
+    # while True:
+    for i, client_data in enumerate(clients):
+        # try:
+        #     client_data = clients[i]
+        # except IndexError:
+        #     break
         client = client_data[0]
         chats = []
         result = client(GetDialogsRequest(
@@ -276,8 +275,8 @@ def scrape_process(user_data, run=None):
         msg = 'Scraping client _{}_ groups'.format(client.api_id)
         set_bot_msg(session, BotResp.MSG, msg)
         chats.extend(result.chats)
-        client_chat_from = None
-        client_chat_to = None
+        # client_chat_from = None
+        # client_chat_to = None
         if result.messages:
             for chat in chats:
                 if not hasattr(chat, 'megagroup'):
@@ -285,22 +284,23 @@ def scrape_process(user_data, run=None):
                 try:
                     if chat.access_hash is not None:
                         if chat.id == chat_id_from:
-                            client_chat_from = chat
-                            #target_groups_from.append(chat)
+                            # client_chat_from = chat
+                            target_groups_from.append(chat)
                         elif chat.id == chat_id_to:
-                            client_chat_to = chat
-                            # target_groups_to[i] = chat
+                            # client_chat_to = chat
+                            target_groups_to[i] = chat
                 except:
                     pass
-        if client_chat_from and client_chat_to:
-            target_groups_from.append(client_chat_from)
-            target_groups_to[i] = client_chat_to
-            i += 1
-        else:
-           clients.pop(i)
+        # i += 1
+        # if client_chat_from and client_chat_to:
+        #     target_groups_from.append(client_chat_from)
+        #     target_groups_to[i] = client_chat_to
+        #     i += 1
+        # else:
+        #    clients.pop(i)
 
         sleep(1)
-    if len(target_groups_from) != len(clients) and len(target_groups_to) != len(clients):
+    if len(target_groups_from) != len(clients) or len(target_groups_to) != len(clients):
         msg = 'All accounts should be a member of both groups.'
         stop_scrape(session, clients, run, msg)
         return
@@ -392,15 +392,10 @@ def scrape_process(user_data, run=None):
             del target_groups_to[p_i]
             del groups_participants[p_i]
             continue
-        except (UserPrivacyRestrictedError) as ex:
+        except (UserPrivacyRestrictedError, UserNotMutualContactError) as ex:
             msg = 'Client {} can\'t add user.\n'.format(phone)
             msg += 'Reason: {}'.format(ex)
             set_bot_msg(session, BotResp.MSG, msg)
-        # except ChatAdminRequiredError as ex:
-        #     msg = 'Script will stop.\n'
-        #     msg += 'Reason: {}'.format(ex)
-        #     set_bot_msg(session, BotResp.MSG, msg)
-        #     break
         else:
             if run:
                 ScrapedAccount.create(user_id=user_id, run=run)

@@ -2,6 +2,7 @@ import datetime
 import os
 import time
 import uuid
+import random
 
 from telethon import TelegramClient, sync
 from telethon.errors.rpcerrorlist import ApiIdInvalidError, PhoneCodeInvalidError, PhoneCodeExpiredError, \
@@ -254,7 +255,7 @@ def scrape_process(user_data, run=None):
             break
 
     target_groups_from = []
-    target_groups_to = {}
+    target_groups_to = []
 
     # i = 0
     # while True:
@@ -288,7 +289,7 @@ def scrape_process(user_data, run=None):
                             target_groups_from.append(chat)
                         elif chat.id == chat_id_to:
                             # client_chat_to = chat
-                            target_groups_to[i] = chat
+                            target_groups_to.append(chat)
                 except:
                     pass
         # i += 1
@@ -304,7 +305,7 @@ def scrape_process(user_data, run=None):
         msg = 'All accounts should be a member of both groups.'
         stop_scrape(session, clients, run, msg)
         return
-    groups_participants = {}
+    groups_participants = []
     if run:
         added_participants = ScrapedAccount.select(ScrapedAccount.user_id)\
             .where(ScrapedAccount.run == run).tuples()
@@ -333,7 +334,7 @@ def scrape_process(user_data, run=None):
             all_participants.update({user.id: user.access_hash for user in participants.users})
             offset += len(participants.users)
             sleep(1)
-        groups_participants[i] = all_participants
+        groups_participants.append(all_participants)
 
     offset = 0
     limit = 0
@@ -353,11 +354,17 @@ def scrape_process(user_data, run=None):
         offset += len(participants.users)
         sleep(1)
 
-    first_clients_participants = groups_participants[0]
-    for i, user_id in enumerate(first_clients_participants):
+    first_clients_participants = list(groups_participants[0].keys())
+    i = 0
+    while True:
+        try:
+            user_id = first_clients_participants[i]
+        except IndexError:
+            break
         if not len(clients):
             break
         if user_id in memberIds:
+            i += 1
             continue
         p_i = int(i % len(clients))
         if run:
@@ -369,12 +376,14 @@ def scrape_process(user_data, run=None):
             continue
 
         client, phone, client_limit = clients[p_i]
+        if random.randint(1, 3) == 1:
+           client_limit = 50
         if client_limit >= 50:
             msg = 'Client {} has reached limit of 50 users.'.format(phone)
             set_bot_msg(session, BotResp.MSG, msg)
             clients.pop(p_i)
-            del target_groups_to[p_i]
-            del groups_participants[p_i]
+            target_groups_to.pop(p_i)
+            groups_participants.pop(p_i)
             continue
         msg = 'Adding {}'.format(user_id)
         set_bot_msg(session, BotResp.MSG, msg)
@@ -389,8 +398,8 @@ def scrape_process(user_data, run=None):
             msg += 'Reason: {}'.format(ex)
             set_bot_msg(session, BotResp.MSG, msg)
             clients.pop(p_i)
-            del target_groups_to[p_i]
-            del groups_participants[p_i]
+            target_groups_to.pop(p_i)
+            groups_participants.pop(p_i)
             continue
         except (UserPrivacyRestrictedError, UserNotMutualContactError) as ex:
             msg = 'Client {} can\'t add user.\n'.format(phone)
@@ -399,6 +408,7 @@ def scrape_process(user_data, run=None):
         else:
             if run:
                 ScrapedAccount.create(user_id=user_id, run=run)
+        i += 1
     disconnect_clients(clients)
     if run:
         now = datetime.datetime.now()

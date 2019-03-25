@@ -19,9 +19,8 @@ class Account(BaseModel):
 
 
 class Run(BaseModel):
-    run_hash = CharField()
-    group_from = IntegerField(null=True)
-    group_to = IntegerField(null=True)
+    group_from = CharField()
+    group_to = CharField()
 
 
 class ScrapedAccount(BaseModel):

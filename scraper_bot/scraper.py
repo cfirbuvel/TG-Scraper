@@ -109,14 +109,14 @@ def send_code_sign_in(client, session, phone, username, code=None):
 # Because sometimes accounts finish their limits before some other accounts, or if an account is blocked by telegram , the scraper still try to add clients from this accounts so many clients missed
 
 
-def stop_scrape(session, clients, run, msg=BotMessages.SCRAPE_CANCELLED):
+def stop_scrape(session, clients, msg=BotMessages.SCRAPE_CANCELLED):
     set_bot_msg(session, BotResp.EXIT, msg)
     disconnect_clients(clients)
-    if not run:
-        session.json_set(SessionKeys.RUNNING, False)
+    # if not run:
+    session.json_set(SessionKeys.RUNNING, False)
 
 
-def scrape_process(user_data, run=None):
+def scrape_process(user_data, scheduled=False):
     session = user_data['session']
     i = 0
     clients = []
@@ -137,13 +137,13 @@ def scrape_process(user_data, run=None):
             if resp == 'continue':
                 continue
             elif resp is None:
-                stop_scrape(session, clients, run)
+                stop_scrape(session, clients)
                 return
         i += 1
         clients.append([client, phone, 0])
     if not clients:
         msg = 'You either didn\'t add users or verification for all users failed'
-        stop_scrape(session, clients, run, msg)
+        stop_scrape(session, clients, msg)
         return
 
     chats = []
@@ -176,53 +176,44 @@ def scrape_process(user_data, run=None):
                 pass
     sleep(1)
 
-    g_index = None
-    if run:
-        g_index = run.group_from
-    if g_index is None:
-        msg = 'List of groups:\n'
-        i = 0
-        for g in groups:
-            msg += '{} - {}\n'.format(i, g.title)
-            i += 1
-        msg += 'Choose a group to scrape members from. (Enter a Number): '
-        msg = escape_markdown(msg)
-        set_bot_msg(session, BotResp.ACTION, msg, 'stop_scrape')
-        g_index = get_redis_key(session, SessionKeys.SCRAPER_MSG)
-        if g_index == '❌ Stop':
-            stop_scrape(session, clients, run)
-            return
-        g_index = int(g_index)
-        if run:
-            run.group_from = g_index
-            run.save()
+    msg = 'List of groups:\n'
+    i = 0
+    for g in groups:
+        msg += '{} - {}\n'.format(i, g.title)
+        i += 1
+    msg += 'Choose a group to scrape members from. (Enter a Number): '
+    msg = escape_markdown(msg)
+    set_bot_msg(session, BotResp.ACTION, msg, 'stop_scrape')
+    g_index = get_redis_key(session, SessionKeys.SCRAPER_MSG)
+    if g_index == '❌ Stop':
+        stop_scrape(session, clients)
+        return
+    g_index = int(g_index)
 
     chat_from = groups[g_index]
     chat_id_from = chat_from.id
 
-    g_index = None
-    if run:
-        g_index = run.group_to
-    if g_index is None:
-        i = 0
-        msg = 'List of groups:\n'
-        for g in targets:
-            msg += '{} - {}\n'.format(i, g.title)
-            i += 1
-        msg += 'Choose a group or channel to add members. (Enter a Number): '
-        msg = escape_markdown(msg)
-        set_bot_msg(session, BotResp.ACTION, msg, 'stop_scrape')
-        g_index = get_redis_key(session, SessionKeys.SCRAPER_MSG)
-        if g_index == '❌ Stop':
-            stop_scrape(session, clients, run)
-            return
-        g_index = int(g_index)
-        if run:
-            run.group_to = g_index
-            run.save()
+    i = 0
+    msg = 'List of groups:\n'
+    for g in targets:
+        msg += '{} - {}\n'.format(i, g.title)
+        i += 1
+    msg += 'Choose a group or channel to add members. (Enter a Number): '
+    msg = escape_markdown(msg)
+    set_bot_msg(session, BotResp.ACTION, msg, 'stop_scrape')
+    g_index = get_redis_key(session, SessionKeys.SCRAPER_MSG)
+    if g_index == '❌ Stop':
+        stop_scrape(session, clients)
+        return
+    g_index = int(g_index)
 
     chat_to = targets[g_index]
     chat_id_to = chat_to.id
+
+    try:
+        run = Run.get(group_from=str(chat_id_from), group_to=str(chat_id_to))
+    except Run.DoesNotExist:
+        run = Run.create(group_from=str(chat_id_from), group_to=str(chat_id_to))
 
     msg = 'Adding bots to groups'
     set_bot_msg(session, BotResp.MSG, msg)
@@ -257,13 +248,7 @@ def scrape_process(user_data, run=None):
     target_groups_from = []
     target_groups_to = []
 
-    # i = 0
-    # while True:
     for i, client_data in enumerate(clients):
-        # try:
-        #     client_data = clients[i]
-        # except IndexError:
-        #     break
         client = client_data[0]
         chats = []
         result = client(GetDialogsRequest(
@@ -276,8 +261,6 @@ def scrape_process(user_data, run=None):
         msg = 'Scraping client _{}_ groups'.format(client.api_id)
         set_bot_msg(session, BotResp.MSG, msg)
         chats.extend(result.chats)
-        # client_chat_from = None
-        # client_chat_to = None
         if result.messages:
             for chat in chats:
                 if not hasattr(chat, 'megagroup'):
@@ -285,31 +268,23 @@ def scrape_process(user_data, run=None):
                 try:
                     if chat.access_hash is not None:
                         if chat.id == chat_id_from:
-                            # client_chat_from = chat
                             target_groups_from.append(chat)
                         elif chat.id == chat_id_to:
-                            # client_chat_to = chat
                             target_groups_to.append(chat)
                 except:
                     pass
-        # i += 1
-        # if client_chat_from and client_chat_to:
-        #     target_groups_from.append(client_chat_from)
-        #     target_groups_to[i] = client_chat_to
-        #     i += 1
-        # else:
-        #    clients.pop(i)
 
         sleep(1)
     if len(target_groups_from) != len(clients) or len(target_groups_to) != len(clients):
         msg = 'All accounts should be a member of both groups.'
-        stop_scrape(session, clients, run, msg)
+        stop_scrape(session, clients, msg)
         return
     groups_participants = []
-    if run:
-        added_participants = ScrapedAccount.select(ScrapedAccount.user_id)\
-            .where(ScrapedAccount.run == run).tuples()
-        added_participants = [val[0] for val in added_participants]
+
+    added_participants = ScrapedAccount.select(ScrapedAccount.user_id)\
+        .where(ScrapedAccount.run == run).tuples()
+    added_participants = [val[0] for val in added_participants]
+
     for i, client_data in enumerate(clients):
         client = client_data[0]
         all_participants = {}
@@ -331,7 +306,7 @@ def scrape_process(user_data, run=None):
                 break
             if not participants.users:
                 break
-            all_participants.update({user.id: user.access_hash for user in participants.users})
+            all_participants.update({user.id: user.access_hash for user in participants.users if user.id not in added_participants})
             offset += len(participants.users)
             sleep(1)
         groups_participants.append(all_participants)
@@ -356,20 +331,7 @@ def scrape_process(user_data, run=None):
 
     first_clients_participants = list(groups_participants[0].keys())
     i = 0
-    # debug_file = open('debug.txt', 'w')
-    # print('\n\ndebug participants', file=debug_file)
-    # pprint(groups_participants, stream=debug_file)
-    # print('\n\ndebug clients', file=debug_file)
-    # pprint(clients, stream=debug_file)
-    # print('\n\ndebug target groups', file=debug_file)
-    # pprint(target_groups_to, stream=debug_file)
     while True:
-        # print('\n\ndebug participants', file=debug_file)
-        # pprint(groups_participants, stream=debug_file)
-        # print('\n\ndebug clients', file=debug_file)
-        # pprint(clients, stream=debug_file)
-        # print('\n\ndebug target groups', file=debug_file)
-        # pprint(target_groups_to, stream=debug_file)
         try:
             user_id = first_clients_participants[i]
         except IndexError:
@@ -380,11 +342,6 @@ def scrape_process(user_data, run=None):
             i += 1
             continue
         p_i = int(i % len(clients))
-        if run:
-            if user_id in added_participants:
-                continue
-        # print('\n\ndebug i: ', i, file=debug_file)
-        # print('debug p_i: ', p_i, file=debug_file)
         try:
             user_hash = groups_participants[p_i][user_id]
         except KeyError:
@@ -419,12 +376,10 @@ def scrape_process(user_data, run=None):
             msg += 'Reason: {}'.format(ex)
             set_bot_msg(session, BotResp.MSG, msg)
         else:
-            if run:
-                ScrapedAccount.create(user_id=user_id, run=run)
+            ScrapedAccount.create(user_id=user_id, run=run)
         i += 1
-    # debug_file.close()
     disconnect_clients(clients)
-    if run:
+    if scheduled:
         now = datetime.datetime.now()
         next_time = now + datetime.timedelta(hours=24)
         next_time_str = next_time.strftime('%B %d, %H:%M')
@@ -442,23 +397,18 @@ def delete_scraped_account(run_hash):
 
 
 def scheduled_scrape(user_data, hours=24):
-    run_hash = uuid.uuid4().hex
-    run = Run.create(run_hash=run_hash)
     seconds_per_hour = 3600
     seconds = hours * seconds_per_hour
     session = user_data['session']
     while True:
-        res = scrape_process(user_data, run)
+        res = scrape_process(user_data, scheduled=True)
         if not res:
-            run.delete_instance()
-            session.json_set(SessionKeys.RUNNING, False)
             return
         num_intervals = hours * 60
         interval_secs = seconds / num_intervals
         for _ in range(num_intervals):
             stop = get_exit_key(session)
             if stop:
-                run.delete_instance()
                 session.json_set(SessionKeys.RUNNING, False)
                 return
             time.sleep(interval_secs)

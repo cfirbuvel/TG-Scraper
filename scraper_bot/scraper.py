@@ -38,6 +38,7 @@ def disconnect_clients(clients):
     for client, _, _ in clients:
         client.disconnect()
 
+
 def print_attrs(o):
     for attr in dir(o):
         if not attr.startswith('_'):
@@ -112,11 +113,10 @@ def send_code_sign_in(client, session, phone, username, code=None):
 def stop_scrape(session, clients, msg=BotMessages.SCRAPE_CANCELLED):
     set_bot_msg(session, BotResp.EXIT, msg)
     disconnect_clients(clients)
-    # if not run:
     session.json_set(SessionKeys.RUNNING, False)
 
 
-def scrape_process(user_data, scheduled=False):
+def scrape_process(user_data, scheduled_groups=False, scheduled=False):
     session = user_data['session']
     i = 0
     clients = []
@@ -176,39 +176,43 @@ def scrape_process(user_data, scheduled=False):
                 pass
     sleep(1)
 
-    msg = 'List of groups:\n'
-    i = 0
-    for g in groups:
-        msg += '{} - {}\n'.format(i, g.title)
-        i += 1
-    msg += 'Choose a group to scrape members from. (Enter a Number): '
-    msg = escape_markdown(msg)
-    set_bot_msg(session, BotResp.ACTION, msg, 'stop_scrape')
-    g_index = get_redis_key(session, SessionKeys.SCRAPER_MSG)
-    if g_index == '❌ Stop':
-        stop_scrape(session, clients)
-        return
-    g_index = int(g_index)
+    if not scheduled_groups:
+        msg = 'List of groups:\n'
+        i = 0
+        for g in groups:
+            msg += '{} - {}\n'.format(i, g.title)
+            i += 1
+        msg += 'Choose a group to scrape members from. (Enter a Number): '
+        msg = escape_markdown(msg)
+        set_bot_msg(session, BotResp.ACTION, msg, 'stop_scrape')
+        g_index = get_redis_key(session, SessionKeys.SCRAPER_MSG)
+        if g_index == '❌ Stop':
+            stop_scrape(session, clients)
+            return
+        g_index = int(g_index)
 
-    chat_from = groups[g_index]
-    chat_id_from = chat_from.id
+        chat_from = groups[g_index]
+        chat_id_from = chat_from.id
 
-    i = 0
-    msg = 'List of groups:\n'
-    for g in targets:
-        msg += '{} - {}\n'.format(i, g.title)
-        i += 1
-    msg += 'Choose a group or channel to add members. (Enter a Number): '
-    msg = escape_markdown(msg)
-    set_bot_msg(session, BotResp.ACTION, msg, 'stop_scrape')
-    g_index = get_redis_key(session, SessionKeys.SCRAPER_MSG)
-    if g_index == '❌ Stop':
-        stop_scrape(session, clients)
-        return
-    g_index = int(g_index)
+        i = 0
+        msg = 'List of groups:\n'
+        for g in targets:
+            msg += '{} - {}\n'.format(i, g.title)
+            i += 1
+        msg += 'Choose a group or channel to add members. (Enter a Number): '
+        msg = escape_markdown(msg)
+        set_bot_msg(session, BotResp.ACTION, msg, 'stop_scrape')
+        g_index = get_redis_key(session, SessionKeys.SCRAPER_MSG)
+        if g_index == '❌ Stop':
+            stop_scrape(session, clients)
+            return
+        g_index = int(g_index)
 
-    chat_to = targets[g_index]
-    chat_id_to = chat_to.id
+        chat_to = targets[g_index]
+        chat_id_to = chat_to.id
+        scheduled_groups = (chat_id_from, chat_id_to)
+    else:
+        chat_id_from, chat_id_to = scheduled_groups
 
     try:
         run = Run.get(group_from=str(chat_id_from), group_to=str(chat_id_to))
@@ -389,7 +393,7 @@ def scrape_process(user_data, scheduled=False):
         msg = 'Completed!'
         set_bot_msg(session, BotResp.EXIT, msg)
         session.json_set(SessionKeys.RUNNING, False)
-    return True
+    return scheduled_groups
 
 
 def delete_scraped_account(run_hash):
@@ -400,9 +404,10 @@ def scheduled_scrape(user_data, hours=24):
     seconds_per_hour = 3600
     seconds = hours * seconds_per_hour
     session = user_data['session']
+    groups = None
     while True:
-        res = scrape_process(user_data, scheduled=True)
-        if not res:
+        groups = scrape_process(user_data, scheduled_groups=groups, scheduled=True)
+        if not groups:
             return
         num_intervals = hours * 60
         interval_secs = seconds / num_intervals

@@ -4,6 +4,8 @@ import time
 import uuid
 import random
 
+from telegram.utils.helpers import escape_markdown
+
 from telethon import TelegramClient, sync
 from telethon.errors.rpcerrorlist import ApiIdInvalidError, PhoneCodeInvalidError, PhoneCodeExpiredError, \
     ChannelPrivateError, FloodWaitError, UserBannedInChannelError, ChannelInvalidError, UserPrivacyRestrictedError, \
@@ -19,7 +21,7 @@ from telethon.tl.functions.contacts import ImportContactsRequest
 from time import sleep
 
 from bot_keyboards import action_keyboards_map
-from bot_helpers import read_config, get_redis_key, set_bot_msg, escape_markdown, get_exit_key, clear_session, SessionKeys
+from bot_helpers import read_config, get_redis_key, set_bot_msg, get_exit_key, clear_session, SessionKeys
 from bot_messages import BotMessages
 from bot_models import Account, ScrapedAccount, Run, db
 

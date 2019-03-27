@@ -2,12 +2,13 @@ import re
 import threading
 
 from telegram import ParseMode, ReplyKeyboardRemove
+from telegram.utils.helpers import escape_markdown
 
 from bot_enums import BotStates
 from bot_messages import BotMessages
 from bot_models import Account, db
 import bot_keyboards as keyboards
-from bot_helpers import JsonRedis, SessionKeys, get_redis_key, escape_markdown, set_exit_key, clear_session
+from bot_helpers import JsonRedis, SessionKeys, get_redis_key, set_exit_key, clear_session
 from scraper import scrape_process, scheduled_scrape, BotResp
 
 

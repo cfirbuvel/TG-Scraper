@@ -18,9 +18,6 @@ def init_db(config_name):
     return db
 
 
-def escape_markdown(msg):
-    msg = msg.replace("_", "\\_").replace("*", "\\*").replace("[", "\\[").replace("`", "\\`")
-    return msg
 
 
 class SessionKeys:

@@ -4,6 +4,7 @@ import time
 import uuid
 import random
 
+from telegram.ext import run_async
 from telegram.utils.helpers import escape_markdown
 
 from telethon import TelegramClient, sync
@@ -118,8 +119,7 @@ def stop_scrape(session, clients, msg=BotMessages.SCRAPE_CANCELLED):
     session.json_set(SessionKeys.RUNNING, False)
 
 
-def scrape_process(user_data, scheduled_groups=False, scheduled=False):
-    session = user_data['session']
+def scrape_process(session, scheduled_groups=False):
     i = 0
     clients = []
     config = read_config('config.ini')
@@ -191,9 +191,13 @@ def scrape_process(user_data, scheduled_groups=False, scheduled=False):
         if g_index == '❌ Stop':
             stop_scrape(session, clients)
             return
-        g_index = int(g_index)
 
-        chat_from = groups[g_index]
+        try:
+            chat_from = groups[int(g_index)]
+        except (ValueError, IndexError):
+            set_bot_msg(session, BotResp.MSG, 'Invalid group number')
+            stop_scrape(session, clients)
+            return
         chat_id_from = chat_from.id
 
         i = 0
@@ -208,13 +212,19 @@ def scrape_process(user_data, scheduled_groups=False, scheduled=False):
         if g_index == '❌ Stop':
             stop_scrape(session, clients)
             return
-        g_index = int(g_index)
 
-        chat_to = targets[g_index]
+        try:
+            chat_to = targets[int(g_index)]
+        except (ValueError, IndexError):
+            set_bot_msg(session, BotResp.MSG, 'Invalid group number')
+            stop_scrape(session, clients)
+            return
+
         chat_id_to = chat_to.id
-        scheduled_groups = (chat_id_from, chat_id_to)
+        scheduled_groups = (chat_from, chat_to)
     else:
-        chat_id_from, chat_id_to = scheduled_groups
+        chat_from, chat_to = scheduled_groups
+        chat_id_from, chat_id_to = chat_from.id, chat_to.id
 
     try:
         run = Run.get(group_from=str(chat_id_from), group_to=str(chat_id_to))
@@ -247,7 +257,7 @@ def scrape_process(user_data, scheduled_groups=False, scheduled=False):
             msg = 'User _{}_ was kicked from channel and cannot be added again.'.format(phone)
             set_bot_msg(session, BotResp.MSG, msg)
         except ChatWriteForbiddenError:
-            msg = 'User _{}_ don\'t have permission to invite users to channel from.'.format(phone)
+            msg = 'User _{}_ don\'t have permission to invite users to channels.'.format(phone)
             set_bot_msg(session, BotResp.MSG, msg)
             break
 
@@ -281,18 +291,44 @@ def scrape_process(user_data, scheduled_groups=False, scheduled=False):
                     pass
 
         sleep(1)
+
     if len(target_groups_from) != len(clients) or len(target_groups_to) != len(clients):
-        msg = 'All accounts should be a member of both groups.'
+        msg = 'All accounts should be members of both groups.'
         stop_scrape(session, clients, msg)
         return
+
+    offset = 0
+    limit = 0
+    memberIds = set()
+    while True:
+        try:
+            participants = first_client(GetParticipantsRequest(
+                InputPeerChannel(target_groups_to[first_client_index].id, target_groups_to[first_client_index].access_hash),
+                ChannelParticipantsSearch(''),
+                offset, limit, hash=0
+            ))
+        except:
+            break
+        if not participants.users:
+            break
+        memberIds.update({member.id for member in participants.users})
+        offset += len(participants.users)
+        sleep(1)
+
     groups_participants = []
 
     added_participants = ScrapedAccount.select(ScrapedAccount.user_id)\
         .where(ScrapedAccount.run == run).tuples()
-    added_participants = [val[0] for val in added_participants]
+    added_participants = {val[0] for val in added_participants}
+    added_participants.update(memberIds)
 
-    for i, client_data in enumerate(clients):
-        client = client_data[0]
+
+    i = 0
+    while True:
+        try:
+            client = clients[i][0]
+        except IndexError:
+            break
         all_participants = {}
         offset = 0
         limit = 100
@@ -309,6 +345,7 @@ def scrape_process(user_data, scheduled_groups=False, scheduled=False):
             except ChannelPrivateError:
                 error_msg = 'User _{}_ don\'t have an access to «{}» group. Skipping group'.format(client.api_id, group_title)
                 set_bot_msg(session, BotResp.MSG, error_msg)
+                clients.pop(i)
                 break
             if not participants.users:
                 break
@@ -316,24 +353,7 @@ def scrape_process(user_data, scheduled_groups=False, scheduled=False):
             offset += len(participants.users)
             sleep(1)
         groups_participants.append(all_participants)
-
-    offset = 0
-    limit = 0
-    memberIds = []
-    while True:
-        try:
-            participants = first_client(GetParticipantsRequest(
-                InputPeerChannel(target_groups_to[first_client_index].id, target_groups_to[first_client_index].access_hash),
-                ChannelParticipantsSearch(''),
-                offset, limit, hash=0
-            ))
-        except:
-            break
-        if not participants.users:
-            break
-        memberIds.extend((member.id for member in participants.users))
-        offset += len(participants.users)
-        sleep(1)
+        i += 1
 
     first_clients_participants = list(groups_participants[0].keys())
     i = 0
@@ -344,13 +364,12 @@ def scrape_process(user_data, scheduled_groups=False, scheduled=False):
             break
         if not len(clients):
             break
-        if user_id in memberIds:
-            i += 1
-            continue
+
         p_i = int(i % len(clients))
         try:
             user_hash = groups_participants[p_i][user_id]
         except KeyError:
+            i += 1
             continue
 
         client, phone, client_limit = clients[p_i]
@@ -382,19 +401,11 @@ def scrape_process(user_data, scheduled_groups=False, scheduled=False):
             msg += 'Reason: {}'.format(ex)
             set_bot_msg(session, BotResp.MSG, msg)
         else:
-            ScrapedAccount.create(user_id=user_id, run=run)
+            acc = ScrapedAccount.create(user_id=user_id, run=run)
+            print('acc created')
+            print(acc.user_id)
         i += 1
     disconnect_clients(clients)
-    if scheduled:
-        now = datetime.datetime.now()
-        next_time = now + datetime.timedelta(hours=24)
-        next_time_str = next_time.strftime('%B %d, %H:%M')
-        msg = 'Scrape completed. Next will be started at {}'.format(next_time_str)
-        set_bot_msg(session, BotResp.EXIT, msg)
-    else:
-        msg = 'Completed!'
-        set_bot_msg(session, BotResp.EXIT, msg)
-        session.json_set(SessionKeys.RUNNING, False)
     return scheduled_groups
 
 
@@ -402,15 +413,31 @@ def delete_scraped_account(run_hash):
     ScrapedAccount.delete().where(ScrapedAccount.run_hash == run_hash).execute()
 
 
+@run_async
+def default_scrape(user_data):
+    session = user_data['session']
+    scrape_process(session)
+    msg = 'Completed!'
+    set_bot_msg(session, BotResp.EXIT, msg)
+    session.json_set(SessionKeys.RUNNING, False)
+
+@run_async
 def scheduled_scrape(user_data, hours=24):
     seconds_per_hour = 3600
     seconds = hours * seconds_per_hour
     session = user_data['session']
     groups = None
     while True:
-        groups = scrape_process(user_data, scheduled_groups=groups, scheduled=True)
+        groups = scrape_process(session, scheduled_groups=groups)
         if not groups:
             return
+
+        now = datetime.datetime.now()
+        next_time = now + datetime.timedelta(hours=24)
+        next_time_str = next_time.strftime('%B %d, %H:%M')
+        msg = 'Scrape completed. Next will be started at {}'.format(next_time_str)
+        set_bot_msg(session, BotResp.EXIT, msg)
+
         num_intervals = hours * 60
         interval_secs = seconds / num_intervals
         for _ in range(num_intervals):

@@ -9,7 +9,7 @@ from bot_messages import BotMessages
 from bot_models import Account, db
 import bot_keyboards as keyboards
 from bot_helpers import JsonRedis, SessionKeys, get_redis_key, set_exit_key, clear_session
-from scraper import scrape_process, scheduled_scrape, BotResp
+from scraper import default_scrape, scheduled_scrape, BotResp
 
 
 def on_error(bot, update, error):
@@ -118,17 +118,13 @@ def on_bot_scrape_select(bot, update, user_data):
     callback_data = query.data
     session = JsonRedis(host='localhost', port=6379, db=0)
     session.clear_keys(SessionKeys.BOT_MSG, SessionKeys.SCRAPER_MSG)
-    if callback_data == 'scrape_24':
-        target = scheduled_scrape
-        args = (user_data, 24)
-    else:
-        target = scrape_process
-        args = (user_data,)
     session.json_set(SessionKeys.RUNNING, True)
     user_data['session'] = session
+    if callback_data == 'scrape_24':
+        scheduled_scrape(user_data, 24)
+    else:
+        default_scrape(user_data)
     query.answer()
-    t = threading.Thread(target=target, args=args)
-    t.start()
     return bot_scrape_handler(bot, user_data, chat_id)
     # return BotStates.BOT_SCRAPE
 

@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import os
 import time
@@ -7,7 +8,7 @@ import random
 from telegram.ext import run_async
 from telegram.utils.helpers import escape_markdown
 
-from telethon import TelegramClient, sync
+from telethon import TelegramClient
 from telethon.errors.rpcerrorlist import ApiIdInvalidError, PhoneCodeInvalidError, PhoneCodeExpiredError, \
     ChannelPrivateError, FloodWaitError, UserBannedInChannelError, ChannelInvalidError, UserPrivacyRestrictedError, \
     UserKickedError, ChatAdminRequiredError, PeerFloodError, ChatWriteForbiddenError, UserNotMutualContactError
@@ -37,9 +38,9 @@ class BotResp:
     EXIT = 2
 
 
-def disconnect_clients(clients):
+async def disconnect_clients(clients):
     for client, _, _ in clients:
-        client.disconnect()
+        await client.disconnect()
 
 
 def print_attrs(o):
@@ -51,9 +52,9 @@ def print_attrs(o):
                 pass
 
 
-def send_confirmation_code(session, client, phone, username):
+async def send_confirmation_code(session, client, phone, username):
     try:
-        client.send_code_request(phone)
+        await client.send_code_request(phone)
     except ApiIdInvalidError:
         msg = 'API id or hash is not valid for user _{}_\n' \
               'User skipped.'.format(escape_markdown(username))
@@ -63,8 +64,7 @@ def send_confirmation_code(session, client, phone, username):
         msg = 'User *{}* was banned for flood wait error'.format(escape_markdown(username))
         set_bot_msg(session, BotResp.MSG, msg)
         return
-    code = enter_confirmation_code_action(phone, session)
-    return code
+    return True
 
 
 def enter_confirmation_code_action(phone, session):
@@ -77,75 +77,80 @@ def enter_confirmation_code_action(phone, session):
     else:
         code = code.replace(' ', '')
     return code
-
-
-def send_code_sign_in(client, session, phone, username, code=None):
-    if not code:
-        code = send_confirmation_code(session, client, phone, username)
-    if code is None:
-        return
-    try:
-        client.sign_in(phone, code)
-    except (PhoneCodeInvalidError, PhoneCodeExpiredError) as ex:
-        if type(ex) == PhoneCodeExpiredError:
-            msg = 'Entered code for *{}* has expired.'
-        else:
-            msg = 'Entered code for *{}* is not valid.'
-        msg = msg.format(escape_markdown(username))
-        session.json_set(SessionKeys.BOT_MSG, (BotResp.ACTION, msg, 'phone_invalid'))
-        resp = get_redis_key(session, SessionKeys.SCRAPER_MSG)
-        if resp == 'Enter again':
-            code = enter_confirmation_code_action(phone, session)
-            if code is None:
-                return
-            return send_code_sign_in(client, session, phone, username, code)
-        elif resp == 'Resend code':
-            return send_code_sign_in(client, session, phone, username)
-        elif resp == 'Skip user':
-            return 'continue'
-        elif resp == '❌ Cancel':
-            return
-    return True
-
 #
 # Is it possible to know when an account finished his 50 users limit adding?
 #
 # Because sometimes accounts finish their limits before some other accounts, or if an account is blocked by telegram , the scraper still try to add clients from this accounts so many clients missed
 
 
-def stop_scrape(session, clients, msg=BotMessages.SCRAPE_CANCELLED):
+async def stop_scrape(session, clients, msg=BotMessages.SCRAPE_CANCELLED):
     set_bot_msg(session, BotResp.EXIT, msg)
-    disconnect_clients(clients)
+    await disconnect_clients(clients)
     session.json_set(SessionKeys.RUNNING, False)
 
 
-def scrape_process(session, scheduled_groups=False):
-    i = 0
+def create_clients(loop):
     clients = []
     config = read_config('config.ini')
     sessions_dir = os.path.abspath(config['sessions_dir'])
     if not os.path.isdir(sessions_dir):
         os.mkdir(sessions_dir)
     for acc in Account.select():
-        api_id = acc.api_id
-        api_hash = acc.api_hash
-        phone = acc.phone
-        session_path = os.path.join(sessions_dir, '{}'.format(phone))
-        client = TelegramClient(session_path, api_id, api_hash)
-        client.connect()
-        username = acc.username
-        if not client.is_user_authorized():
-            resp = send_code_sign_in(client, session, phone, username)
-            if resp == 'continue':
+        session_path = os.path.join(sessions_dir, '{}'.format(acc.phone))
+        client = TelegramClient(session_path, acc.api_id, acc.api_hash, loop=loop)
+        clients.append([client, acc, 0])
+    return clients
+
+
+async def scrape_process(session, clients, scheduled_groups=False):
+    for client, acc, _ in clients:
+        await client.connect()
+        is_authorized = await client.is_user_authorized()
+        if not is_authorized:
+            code_sent = await send_confirmation_code(session, client, acc.phone, acc.username)
+            if not code_sent:
                 continue
-            elif resp is None:
-                stop_scrape(session, clients)
+            code = enter_confirmation_code_action(acc.phone, session)
+            if code is None:
+                await stop_scrape(session, clients)
                 return
-        i += 1
-        clients.append([client, phone, 0])
+            skip = False
+            while True:
+                try:
+                    await client.sign_in(acc.phone, code)
+                    break
+                except (PhoneCodeInvalidError, PhoneCodeExpiredError) as ex:
+                    if type(ex) == PhoneCodeExpiredError:
+                        msg = 'Entered code for *{}* has expired.'
+                    else:
+                        msg = 'Entered code for *{}* is not valid.'
+                    msg = msg.format(escape_markdown(acc.username))
+                    session.json_set(SessionKeys.BOT_MSG, (BotResp.ACTION, msg, 'phone_invalid'))
+                    resp = get_redis_key(session, SessionKeys.SCRAPER_MSG)
+                    if resp == 'Enter again':
+                        code = enter_confirmation_code_action(acc.phone, session)
+                        if code is None:
+                            await stop_scrape(session, clients)
+                            return
+                    elif resp == 'Resend code':
+                        code_sent = await send_confirmation_code(session, client, acc.phone, acc.username)
+                        if not code_sent:
+                            continue
+                        code = enter_confirmation_code_action(acc.phone, session)
+                        if code is None:
+                            await stop_scrape(session, clients)
+                            return
+                    elif resp == 'Skip user':
+                        skip = True
+                        break
+                    elif resp == '❌ Cancel':
+                        await stop_scrape(session, clients)
+                        return
+            if skip:
+                continue
     if not clients:
         msg = 'You either didn\'t add users or verification for all users failed'
-        stop_scrape(session, clients, msg)
+        await stop_scrape(session, clients, msg)
         return
 
     chats = []
@@ -154,8 +159,8 @@ def scrape_process(session, scheduled_groups=False):
     groups = []
     targets = []
     first_client_index = 0
-    first_client, first_client_phone, first_client_limit = clients[first_client_index]
-    result = first_client(GetDialogsRequest(
+    first_client, first_client_acc, first_client_limit = clients[first_client_index]
+    result = await first_client(GetDialogsRequest(
         offset_date=last_date,
         offset_id=0,
         offset_peer=InputPeerEmpty(),
@@ -189,14 +194,14 @@ def scrape_process(session, scheduled_groups=False):
         set_bot_msg(session, BotResp.ACTION, msg, 'stop_scrape')
         g_index = get_redis_key(session, SessionKeys.SCRAPER_MSG)
         if g_index == '❌ Stop':
-            stop_scrape(session, clients)
+            await stop_scrape(session, clients)
             return
 
         try:
             chat_from = groups[int(g_index)]
         except (ValueError, IndexError):
             set_bot_msg(session, BotResp.MSG, 'Invalid group number')
-            stop_scrape(session, clients)
+            await stop_scrape(session, clients)
             return
         chat_id_from = chat_from.id
 
@@ -210,14 +215,14 @@ def scrape_process(session, scheduled_groups=False):
         set_bot_msg(session, BotResp.ACTION, msg, 'stop_scrape')
         g_index = get_redis_key(session, SessionKeys.SCRAPER_MSG)
         if g_index == '❌ Stop':
-            stop_scrape(session, clients)
+            await stop_scrape(session, clients)
             return
 
         try:
             chat_to = targets[int(g_index)]
         except (ValueError, IndexError):
             set_bot_msg(session, BotResp.MSG, 'Invalid group number')
-            stop_scrape(session, clients)
+            await stop_scrape(session, clients)
             return
 
         chat_id_to = chat_to.id
@@ -234,30 +239,30 @@ def scrape_process(session, scheduled_groups=False):
     msg = 'Adding bots to groups'
     set_bot_msg(session, BotResp.MSG, msg)
     for counter, data in enumerate(clients[1:]):
-        client, phone, limit = data
+        client, acc, limit = data
         name = str(counter)
-        client_contact = InputPhoneContact(client_id=0, phone=phone, first_name=name, last_name=name)
-        first_client(ImportContactsRequest([client_contact]))
-        first_client_contact = InputPhoneContact(client_id=0, phone=first_client_phone, first_name=name, last_name=name)
-        client(ImportContactsRequest([first_client_contact]))
-        client_user = client.get_me()
-        client_user = first_client.get_entity(client_user.id)
+        client_contact = InputPhoneContact(client_id=0, phone=acc.phone, first_name=name, last_name=name)
+        await first_client(ImportContactsRequest([client_contact]))
+        first_client_contact = InputPhoneContact(client_id=0, phone=first_client_acc.phone, first_name=name, last_name=name)
+        await client(ImportContactsRequest([first_client_contact]))
+        client_user = await client.get_me()
+        client_user = await first_client.get_entity(client_user.id)
         try:
-            first_client(InviteToChannelRequest(
+            await first_client(InviteToChannelRequest(
                 chat_from,
                 [client_user]
             ))
             first_client_limit += 1
-            first_client(InviteToChannelRequest(
+            await first_client(InviteToChannelRequest(
                 chat_to,
                 [client_user]
             ))
             first_client_limit += 1
         except UserKickedError:
-            msg = 'User _{}_ was kicked from channel and cannot be added again.'.format(phone)
+            msg = 'User _{}_ was kicked from channel and cannot be added again.'.format(acc.phone)
             set_bot_msg(session, BotResp.MSG, msg)
         except ChatWriteForbiddenError:
-            msg = 'User _{}_ don\'t have permission to invite users to channels.'.format(phone)
+            msg = 'User _{}_ don\'t have permission to invite users to channels.'.format(acc.phone)
             set_bot_msg(session, BotResp.MSG, msg)
             break
 
@@ -267,7 +272,7 @@ def scrape_process(session, scheduled_groups=False):
     for i, client_data in enumerate(clients):
         client = client_data[0]
         chats = []
-        result = client(GetDialogsRequest(
+        result = await client(GetDialogsRequest(
             offset_date=last_date,
             offset_id=0,
             offset_peer=InputPeerEmpty(),
@@ -294,7 +299,7 @@ def scrape_process(session, scheduled_groups=False):
 
     if len(target_groups_from) != len(clients) or len(target_groups_to) != len(clients):
         msg = 'All accounts should be members of both groups.'
-        stop_scrape(session, clients, msg)
+        await stop_scrape(session, clients, msg)
         return
 
     offset = 0
@@ -302,7 +307,7 @@ def scrape_process(session, scheduled_groups=False):
     memberIds = set()
     while True:
         try:
-            participants = first_client(GetParticipantsRequest(
+            participants = await first_client(GetParticipantsRequest(
                 InputPeerChannel(target_groups_to[first_client_index].id, target_groups_to[first_client_index].access_hash),
                 ChannelParticipantsSearch(''),
                 offset, limit, hash=0
@@ -322,7 +327,6 @@ def scrape_process(session, scheduled_groups=False):
     added_participants = {val[0] for val in added_participants}
     added_participants.update(memberIds)
 
-
     i = 0
     while True:
         try:
@@ -338,7 +342,7 @@ def scrape_process(session, scheduled_groups=False):
         set_bot_msg(session, BotResp.MSG, msg)
         while True:
             try:
-                participants = client(GetParticipantsRequest(
+                participants = await client(GetParticipantsRequest(
                     InputPeerChannel(target_group.id, target_group.access_hash),
                     ChannelParticipantsSearch(''), offset, limit, hash=0
                 ))
@@ -372,9 +376,9 @@ def scrape_process(session, scheduled_groups=False):
             i += 1
             continue
 
-        client, phone, client_limit = clients[p_i]
+        client, acc, client_limit = clients[p_i]
         if client_limit >= 50:
-            msg = 'Client {} has reached limit of 50 users.'.format(phone)
+            msg = 'Client {} has reached limit of 50 users.'.format(acc.phone)
             set_bot_msg(session, BotResp.MSG, msg)
             clients.pop(p_i)
             target_groups_to.pop(p_i)
@@ -383,13 +387,13 @@ def scrape_process(session, scheduled_groups=False):
         msg = 'Adding {}'.format(user_id)
         set_bot_msg(session, BotResp.MSG, msg)
         try:
-            client(InviteToChannelRequest(
+            await client(InviteToChannelRequest(
                 InputChannel(target_groups_to[p_i].id,
                              target_groups_to[p_i].access_hash),
                 [InputUser(user_id, user_hash)],
             ))
         except (FloodWaitError, UserBannedInChannelError, PeerFloodError, ChatAdminRequiredError, ChannelPrivateError) as ex:
-            msg = 'Client {} can\'t add user. Client skipped.\n'.format(phone)
+            msg = 'Client {} can\'t add user. Client skipped.\n'.format(acc.phone)
             msg += 'Reason: {}'.format(ex)
             set_bot_msg(session, BotResp.MSG, msg)
             clients.pop(p_i)
@@ -397,7 +401,7 @@ def scrape_process(session, scheduled_groups=False):
             groups_participants.pop(p_i)
             continue
         except (UserPrivacyRestrictedError, UserNotMutualContactError) as ex:
-            msg = 'Client {} can\'t add user.\n'.format(phone)
+            msg = 'Client {} can\'t add user.\n'.format(acc.phone)
             msg += 'Reason: {}'.format(ex)
             set_bot_msg(session, BotResp.MSG, msg)
         else:
@@ -405,7 +409,7 @@ def scrape_process(session, scheduled_groups=False):
             print('acc created')
             print(acc.user_id)
         i += 1
-    disconnect_clients(clients)
+    await disconnect_clients(clients)
     return scheduled_groups
 
 
@@ -416,7 +420,10 @@ def delete_scraped_account(run_hash):
 @run_async
 def default_scrape(user_data):
     session = user_data['session']
-    scrape_process(session)
+    loop = asyncio.new_event_loop()
+    clients = create_clients(loop)
+    loop.run_until_complete(scrape_process(session, clients))
+    # scrape_process(session, clients)
     msg = 'Completed!'
     set_bot_msg(session, BotResp.EXIT, msg)
     session.json_set(SessionKeys.RUNNING, False)
@@ -427,11 +434,12 @@ def scheduled_scrape(user_data, hours=24):
     seconds = hours * seconds_per_hour
     session = user_data['session']
     groups = None
+    loop = asyncio.new_event_loop()
+    clients = create_clients(loop)
     while True:
-        groups = scrape_process(session, scheduled_groups=groups)
+        groups = loop.run_until_complete(scrape_process(session, clients, scheduled_groups=groups))
         if not groups:
             return
-
         now = datetime.datetime.now()
         next_time = now + datetime.timedelta(hours=24)
         next_time_str = next_time.strftime('%B %d, %H:%M')

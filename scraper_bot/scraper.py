@@ -13,7 +13,7 @@ from telethon import TelegramClient
 from telethon.errors.rpcerrorlist import ApiIdInvalidError, PhoneCodeInvalidError, PhoneCodeExpiredError, \
     ChannelPrivateError, FloodWaitError, UserBannedInChannelError, ChannelInvalidError, UserPrivacyRestrictedError, \
     UserKickedError, ChatAdminRequiredError, PeerFloodError, ChatWriteForbiddenError, UserNotMutualContactError, \
-    InputUserDeactivatedError, UserChannelsTooMuchError
+    InputUserDeactivatedError, UserChannelsTooMuchError, UserBlockedError
 from telethon.tl.functions.messages import GetDialogsRequest
 from telethon.tl.types import InputPeerEmpty
 from telethon.tl.types import InputChannel, InputPeerChannel, InputUser, InputPhoneContact
@@ -402,7 +402,7 @@ async def scrape_process(session, clients, scheduled_groups=False):
             groups_participants.pop(p_i)
             continue
         except (UserPrivacyRestrictedError, UserNotMutualContactError, InputUserDeactivatedError, ChatAdminRequiredError,
-                UserChannelsTooMuchError) as ex:
+                UserChannelsTooMuchError, UserBlockedError) as ex:
             msg = 'Client {} can\'t add user.\n'.format(acc.phone)
             msg += 'Reason: {}'.format(ex)
             set_bot_msg(session, BotResp.MSG, msg)

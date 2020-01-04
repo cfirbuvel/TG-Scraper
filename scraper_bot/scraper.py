@@ -4,6 +4,7 @@ import os
 import time
 import uuid
 import random
+import traceback
 
 from telegram.ext import run_async
 from telegram.utils.helpers import escape_markdown
@@ -11,7 +12,8 @@ from telegram.utils.helpers import escape_markdown
 from telethon import TelegramClient
 from telethon.errors.rpcerrorlist import ApiIdInvalidError, PhoneCodeInvalidError, PhoneCodeExpiredError, \
     ChannelPrivateError, FloodWaitError, UserBannedInChannelError, ChannelInvalidError, UserPrivacyRestrictedError, \
-    UserKickedError, ChatAdminRequiredError, PeerFloodError, ChatWriteForbiddenError, UserNotMutualContactError
+    UserKickedError, ChatAdminRequiredError, PeerFloodError, ChatWriteForbiddenError, UserNotMutualContactError, \
+    InputUserDeactivatedError, UserChannelsTooMuchError
 from telethon.tl.functions.messages import GetDialogsRequest
 from telethon.tl.types import InputPeerEmpty
 from telethon.tl.types import InputChannel, InputPeerChannel, InputUser, InputPhoneContact
@@ -39,8 +41,9 @@ class BotResp:
 
 
 async def disconnect_clients(clients):
-    for client, _, _ in clients:
+    for client, acc, _ in clients:
         await client.disconnect()
+        await client.disconnected
 
 
 def print_attrs(o):
@@ -67,9 +70,9 @@ async def send_confirmation_code(session, client, phone, username):
     return True
 
 
-def enter_confirmation_code_action(phone, session):
-    msg = 'Enter the code for({})\n' \
-          'Please include spaces between numbers, e.g. _41 978_ (code expires otherwise):'.format(phone)
+def enter_confirmation_code_action(phone, username, session):
+    msg = 'Enter the code for({} - {})\n' \
+          'Please include spaces between numbers, e.g. _41 978_ (code expires otherwise):'.format(phone, escape_markdown(username))
     set_bot_msg(session, BotResp.ACTION, msg, 'stop_scrape')
     code = get_redis_key(session, SessionKeys.SCRAPER_MSG)
     if code == '❌ Stop':
@@ -110,7 +113,7 @@ async def scrape_process(session, clients, scheduled_groups=False):
             code_sent = await send_confirmation_code(session, client, acc.phone, acc.username)
             if not code_sent:
                 continue
-            code = enter_confirmation_code_action(acc.phone, session)
+            code = enter_confirmation_code_action(acc.phone, acc.username, session)
             if code is None:
                 await stop_scrape(session, clients)
                 return
@@ -154,14 +157,13 @@ async def scrape_process(session, clients, scheduled_groups=False):
         return
 
     chats = []
-    last_date = None
     chunk_size = 100
     groups = []
     targets = []
     first_client_index = 0
     first_client, first_client_acc, first_client_limit = clients[first_client_index]
     result = await first_client(GetDialogsRequest(
-        offset_date=last_date,
+        offset_date=None,
         offset_id=0,
         offset_peer=InputPeerEmpty(),
         limit=chunk_size,
@@ -169,17 +171,17 @@ async def scrape_process(session, clients, scheduled_groups=False):
     ))
     chats.extend(result.chats)
     if result.messages:
-        for msg in chats:
+        for chat in chats:
             try:
-                mgg = msg.megagroup
-            except:
+                mgg = chat.megagroup
+            except AttributeError:
                 continue
             if mgg == True:
-                groups.append(msg)
+                groups.append(chat)
             try:
-                if msg.access_hash is not None:
-                    targets.append(msg)
-            except:
+                if chat.access_hash is not None:
+                    targets.append(chat)
+            except AttributeError:
                 pass
     sleep(1)
 
@@ -196,7 +198,6 @@ async def scrape_process(session, clients, scheduled_groups=False):
         if g_index == '❌ Stop':
             await stop_scrape(session, clients)
             return
-
         try:
             chat_from = groups[int(g_index)]
         except (ValueError, IndexError):
@@ -217,7 +218,6 @@ async def scrape_process(session, clients, scheduled_groups=False):
         if g_index == '❌ Stop':
             await stop_scrape(session, clients)
             return
-
         try:
             chat_to = targets[int(g_index)]
         except (ValueError, IndexError):
@@ -273,7 +273,7 @@ async def scrape_process(session, clients, scheduled_groups=False):
         client = client_data[0]
         chats = []
         result = await client(GetDialogsRequest(
-            offset_date=last_date,
+            offset_date=None,
             offset_id=0,
             offset_peer=InputPeerEmpty(),
             limit=chunk_size,
@@ -320,6 +320,7 @@ async def scrape_process(session, clients, scheduled_groups=False):
         offset += len(participants.users)
         sleep(1)
 
+    clients_copy = clients.copy()
     groups_participants = []
 
     added_participants = ScrapedAccount.select(ScrapedAccount.user_id)\
@@ -330,7 +331,7 @@ async def scrape_process(session, clients, scheduled_groups=False):
     i = 0
     while True:
         try:
-            client = clients[i][0]
+            client, acc, limit = clients[i]
         except IndexError:
             break
         all_participants = {}
@@ -338,9 +339,9 @@ async def scrape_process(session, clients, scheduled_groups=False):
         limit = 100
         target_group = target_groups_from[i]
         group_title = escape_markdown(target_group.title)
-        msg = 'Scraping «{}» group participants'.format(group_title)
-        set_bot_msg(session, BotResp.MSG, msg)
         while True:
+            msg = 'Scraping «{}» group participants for @{}'.format(group_title, escape_markdown(acc.username))
+            set_bot_msg(session, BotResp.MSG, msg)
             try:
                 participants = await client(GetParticipantsRequest(
                     InputPeerChannel(target_group.id, target_group.access_hash),
@@ -392,7 +393,7 @@ async def scrape_process(session, clients, scheduled_groups=False):
                              target_groups_to[p_i].access_hash),
                 [InputUser(user_id, user_hash)],
             ))
-        except (FloodWaitError, UserBannedInChannelError, PeerFloodError, ChatAdminRequiredError, ChannelPrivateError) as ex:
+        except (FloodWaitError, UserBannedInChannelError, PeerFloodError, ChannelPrivateError) as ex:
             msg = 'Client {} can\'t add user. Client skipped.\n'.format(acc.phone)
             msg += 'Reason: {}'.format(ex)
             set_bot_msg(session, BotResp.MSG, msg)
@@ -400,16 +401,16 @@ async def scrape_process(session, clients, scheduled_groups=False):
             target_groups_to.pop(p_i)
             groups_participants.pop(p_i)
             continue
-        except (UserPrivacyRestrictedError, UserNotMutualContactError) as ex:
+        except (UserPrivacyRestrictedError, UserNotMutualContactError, InputUserDeactivatedError, ChatAdminRequiredError,
+                UserChannelsTooMuchError) as ex:
             msg = 'Client {} can\'t add user.\n'.format(acc.phone)
             msg += 'Reason: {}'.format(ex)
             set_bot_msg(session, BotResp.MSG, msg)
         else:
             acc = ScrapedAccount.create(user_id=user_id, run=run)
-            print('acc created')
-            print(acc.user_id)
+        time.sleep(1)
         i += 1
-    await disconnect_clients(clients)
+    await disconnect_clients(clients_copy)
     return scheduled_groups
 
 

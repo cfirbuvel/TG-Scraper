@@ -59,12 +59,12 @@ def get_redis_key(session, name):
         time.sleep(0.5)
 
 
-def set_bot_msg(session, resp_enum, msg, keyboard_key=None):
+def set_bot_msg(session, values):
     key = SessionKeys.BOT_MSG
     while True:
         exists = session.json_get(key)
         if not exists:
-            session.json_set(key, (resp_enum, msg, keyboard_key))
+            session.json_set(key, values)
             break
         else:
             time.sleep(0.5)

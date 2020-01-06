@@ -38,6 +38,10 @@ class BotResp:
     ACTION = 0
     MSG = 1
     EXIT = 2
+    EDIT_MSG = 3
+
+
+spinner_symbols = ['|', '/', '—', '\\']
 
 
 async def disconnect_clients(clients):
@@ -61,11 +65,11 @@ async def send_confirmation_code(session, client, phone, username):
     except ApiIdInvalidError:
         msg = 'API id or hash is not valid for user _{}_\n' \
               'User skipped.'.format(escape_markdown(username))
-        set_bot_msg(session, BotResp.MSG, msg)
+        set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg})
         return
     except FloodWaitError:
         msg = 'User *{}* was banned for flood wait error'.format(escape_markdown(username))
-        set_bot_msg(session, BotResp.MSG, msg)
+        set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg})
         return
     return True
 
@@ -73,7 +77,7 @@ async def send_confirmation_code(session, client, phone, username):
 def enter_confirmation_code_action(phone, username, session):
     msg = 'Enter the code for({} - {})\n' \
           'Please include spaces between numbers, e.g. _41 978_ (code expires otherwise):'.format(phone, escape_markdown(username))
-    set_bot_msg(session, BotResp.ACTION, msg, 'stop_scrape')
+    set_bot_msg(session, {'action': BotResp.ACTION, 'msg': msg, 'keyboard': 'stop_scrape'})
     code = get_redis_key(session, SessionKeys.SCRAPER_MSG)
     if code == '❌ Stop':
         code = None
@@ -87,7 +91,7 @@ def enter_confirmation_code_action(phone, username, session):
 
 
 async def stop_scrape(session, clients, msg=BotMessages.SCRAPE_CANCELLED):
-    set_bot_msg(session, BotResp.EXIT, msg)
+    set_bot_msg(session, {'action': BotResp.EXIT, 'msg': msg})
     await disconnect_clients(clients)
     session.json_set(SessionKeys.RUNNING, False)
 
@@ -128,10 +132,10 @@ async def scrape_process(session, clients, scheduled_groups=False):
                     else:
                         msg = 'Entered code for *{}* is not valid.'
                     msg = msg.format(escape_markdown(acc.username))
-                    session.json_set(SessionKeys.BOT_MSG, (BotResp.ACTION, msg, 'phone_invalid'))
+                    set_bot_msg(session, {'action': BotResp.ACTION, 'msg': msg, 'keyboard': 'phone_invalid'})
                     resp = get_redis_key(session, SessionKeys.SCRAPER_MSG)
                     if resp == 'Enter again':
-                        code = enter_confirmation_code_action(acc.phone, session)
+                        code = enter_confirmation_code_action(acc.phone, acc.username, session)
                         if code is None:
                             await stop_scrape(session, clients)
                             return
@@ -139,7 +143,7 @@ async def scrape_process(session, clients, scheduled_groups=False):
                         code_sent = await send_confirmation_code(session, client, acc.phone, acc.username)
                         if not code_sent:
                             continue
-                        code = enter_confirmation_code_action(acc.phone, session)
+                        code = enter_confirmation_code_action(acc.phone, acc.username, session)
                         if code is None:
                             await stop_scrape(session, clients)
                             return
@@ -193,7 +197,7 @@ async def scrape_process(session, clients, scheduled_groups=False):
             i += 1
         msg += 'Choose a group to scrape members from. (Enter a Number): '
         msg = escape_markdown(msg)
-        set_bot_msg(session, BotResp.ACTION, msg, 'stop_scrape')
+        set_bot_msg(session, {'action': BotResp.ACTION, 'msg': msg, 'keyboard': 'stop_scrape'})
         g_index = get_redis_key(session, SessionKeys.SCRAPER_MSG)
         if g_index == '❌ Stop':
             await stop_scrape(session, clients)
@@ -201,7 +205,7 @@ async def scrape_process(session, clients, scheduled_groups=False):
         try:
             chat_from = groups[int(g_index)]
         except (ValueError, IndexError):
-            set_bot_msg(session, BotResp.MSG, 'Invalid group number')
+            set_bot_msg(session, {'action': BotResp.MSG, 'msg': 'Invalid group number'})
             await stop_scrape(session, clients)
             return
         chat_id_from = chat_from.id
@@ -213,7 +217,7 @@ async def scrape_process(session, clients, scheduled_groups=False):
             i += 1
         msg += 'Choose a group or channel to add members. (Enter a Number): '
         msg = escape_markdown(msg)
-        set_bot_msg(session, BotResp.ACTION, msg, 'stop_scrape')
+        set_bot_msg(session, {'action': BotResp.ACTION, 'msg': msg, 'keyboard': 'stop_scrape'})
         g_index = get_redis_key(session, SessionKeys.SCRAPER_MSG)
         if g_index == '❌ Stop':
             await stop_scrape(session, clients)
@@ -221,7 +225,7 @@ async def scrape_process(session, clients, scheduled_groups=False):
         try:
             chat_to = targets[int(g_index)]
         except (ValueError, IndexError):
-            set_bot_msg(session, BotResp.MSG, 'Invalid group number')
+            set_bot_msg(session, {'action': BotResp.MSG, 'msg': 'Invalid group number'})
             await stop_scrape(session, clients)
             return
 
@@ -237,12 +241,24 @@ async def scrape_process(session, clients, scheduled_groups=False):
         run = Run.create(group_from=str(chat_id_from), group_to=str(chat_id_to))
 
     msg = 'Adding bots to groups'
-    set_bot_msg(session, BotResp.MSG, msg)
+    set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg})
     for counter, data in enumerate(clients[1:]):
         client, acc, limit = data
         name = str(counter)
         client_contact = InputPhoneContact(client_id=0, phone=acc.phone, first_name=name, last_name=name)
-        await first_client(ImportContactsRequest([client_contact]))
+        try:
+            await first_client(ImportContactsRequest([client_contact]))
+        except PeerFloodError:
+            j = 0
+            msg = 'Got PeerFlood error. Waiting for 120 seconds. {}'.format(spinner_symbols[j])
+            set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg, 'edit': True})
+            msg_id = get_redis_key(session, SessionKeys.SCRAPER_MSG)
+            for i in range(120):
+                time.sleep(1)
+                j = (j + 1) % 4
+                msg = 'Got PeerFlood error. Waiting for 120 seconds. {}'.format(spinner_symbols[j])
+                set_bot_msg(session, {'action': BotResp.EDIT_MSG, 'msg': msg, 'edit': True, 'msg_id': msg_id})
+                msg_id = get_redis_key(session, SessionKeys.SCRAPER_MSG)
         first_client_contact = InputPhoneContact(client_id=0, phone=first_client_acc.phone, first_name=name, last_name=name)
         await client(ImportContactsRequest([first_client_contact]))
         client_user = await client.get_me()
@@ -260,11 +276,12 @@ async def scrape_process(session, clients, scheduled_groups=False):
             first_client_limit += 1
         except UserKickedError:
             msg = 'User _{}_ was kicked from channel and cannot be added again.'.format(acc.phone)
-            set_bot_msg(session, BotResp.MSG, msg)
+            set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg})
         except ChatWriteForbiddenError:
             msg = 'User _{}_ don\'t have permission to invite users to channels.'.format(acc.phone)
-            set_bot_msg(session, BotResp.MSG, msg)
+            set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg})
             break
+        time.sleep(3)
 
     target_groups_from = []
     target_groups_to = []
@@ -280,7 +297,7 @@ async def scrape_process(session, clients, scheduled_groups=False):
             hash=0
         ))
         msg = 'Scraping client _{}_ groups'.format(client.api_id)
-        set_bot_msg(session, BotResp.MSG, msg)
+        set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg})
         chats.extend(result.chats)
         if result.messages:
             for chat in chats:
@@ -339,9 +356,11 @@ async def scrape_process(session, clients, scheduled_groups=False):
         limit = 100
         target_group = target_groups_from[i]
         group_title = escape_markdown(target_group.title)
+        j = 0
+        msg = 'Scraping «{}» group participants for @{} {}'.format(group_title, escape_markdown(acc.username), spinner_symbols[j])
+        set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg, 'edit': True})
+        msg_id = get_redis_key(session, SessionKeys.SCRAPER_MSG)
         while True:
-            msg = 'Scraping «{}» group participants for @{}'.format(group_title, escape_markdown(acc.username))
-            set_bot_msg(session, BotResp.MSG, msg)
             try:
                 participants = await client(GetParticipantsRequest(
                     InputPeerChannel(target_group.id, target_group.access_hash),
@@ -349,7 +368,7 @@ async def scrape_process(session, clients, scheduled_groups=False):
                 ))
             except ChannelPrivateError:
                 error_msg = 'User _{}_ don\'t have an access to «{}» group. Skipping group'.format(client.api_id, group_title)
-                set_bot_msg(session, BotResp.MSG, error_msg)
+                set_bot_msg(session, {'action': BotResp.MSG, 'msg': error_msg})
                 clients.pop(i)
                 break
             if not participants.users:
@@ -357,6 +376,11 @@ async def scrape_process(session, clients, scheduled_groups=False):
             all_participants.update({user.id: user.access_hash for user in participants.users if user.id not in added_participants})
             offset += len(participants.users)
             sleep(1)
+            j = (j + 1) % 4
+            msg = 'Scraping «{}» group participants for @{} {}'.format(group_title, escape_markdown(acc.username),
+                                                                       spinner_symbols[j])
+            set_bot_msg(session, {'action': BotResp.EDIT_MSG, 'msg': msg, 'edit': True, 'msg_id': msg_id})
+            msg_id = get_redis_key(session, SessionKeys.SCRAPER_MSG)
         groups_participants.append(all_participants)
         i += 1
 
@@ -380,13 +404,13 @@ async def scrape_process(session, clients, scheduled_groups=False):
         client, acc, client_limit = clients[p_i]
         if client_limit >= 50:
             msg = 'Client {} has reached limit of 50 users.'.format(acc.phone)
-            set_bot_msg(session, BotResp.MSG, msg)
+            set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg})
             clients.pop(p_i)
             target_groups_to.pop(p_i)
             groups_participants.pop(p_i)
             continue
         msg = 'Adding {}'.format(user_id)
-        set_bot_msg(session, BotResp.MSG, msg)
+        set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg})
         try:
             await client(InviteToChannelRequest(
                 InputChannel(target_groups_to[p_i].id,
@@ -396,7 +420,7 @@ async def scrape_process(session, clients, scheduled_groups=False):
         except (FloodWaitError, UserBannedInChannelError, PeerFloodError, ChannelPrivateError) as ex:
             msg = 'Client {} can\'t add user. Client skipped.\n'.format(acc.phone)
             msg += 'Reason: {}'.format(ex)
-            set_bot_msg(session, BotResp.MSG, msg)
+            set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg})
             clients.pop(p_i)
             target_groups_to.pop(p_i)
             groups_participants.pop(p_i)
@@ -405,7 +429,7 @@ async def scrape_process(session, clients, scheduled_groups=False):
                 UserChannelsTooMuchError, UserBlockedError) as ex:
             msg = 'Client {} can\'t add user.\n'.format(acc.phone)
             msg += 'Reason: {}'.format(ex)
-            set_bot_msg(session, BotResp.MSG, msg)
+            set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg})
         else:
             acc = ScrapedAccount.create(user_id=user_id, run=run)
         time.sleep(1)
@@ -426,7 +450,7 @@ def default_scrape(user_data):
     loop.run_until_complete(scrape_process(session, clients))
     # scrape_process(session, clients)
     msg = 'Completed!'
-    set_bot_msg(session, BotResp.EXIT, msg)
+    set_bot_msg(session, {'action': BotResp.EXIT, 'msg': msg})
     session.json_set(SessionKeys.RUNNING, False)
 
 @run_async
@@ -445,7 +469,7 @@ def scheduled_scrape(user_data, hours=24):
         next_time = now + datetime.timedelta(hours=24)
         next_time_str = next_time.strftime('%B %d, %H:%M')
         msg = 'Scrape completed. Next will be started at {}'.format(next_time_str)
-        set_bot_msg(session, BotResp.EXIT, msg)
+        set_bot_msg(session, {'action': BotResp.EXIT, 'msg': msg})
 
         num_intervals = hours * 60
         interval_secs = seconds / num_intervals

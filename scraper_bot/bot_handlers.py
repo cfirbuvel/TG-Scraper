@@ -84,13 +84,28 @@ def on_bot_scrape_stop(bot, update, user_data):
 def bot_scrape_handler(bot, user_data, chat_id):
     session = user_data['session']
     while True:
-        action, msg, keyboard = get_redis_key(session, SessionKeys.BOT_MSG)
+        # action, msg, keyboard = get_redis_key(session, SessionKeys.BOT_MSG)
+        values = get_redis_key(session, SessionKeys.BOT_MSG)
+        action = values['action']
+        msg = values['msg']
+        keyboard = values.get('keyboard')
+        edit = values.get('edit')
         if keyboard:
             keyboard = keyboards.action_keyboards_map.get(keyboard)
         else:
-            keyboard = ReplyKeyboardRemove()
+            if not edit:
+                keyboard = ReplyKeyboardRemove()
+            else:
+                keyboard = None
         if action == BotResp.MSG:
-            bot.send_message(chat_id, msg, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
+            message = bot.send_message(chat_id, msg, parse_mode=ParseMode.MARKDOWN, keyboard=keyboard)
+            if edit:
+                session.json_set(SessionKeys.SCRAPER_MSG, message['message_id'])
+        elif action == BotResp.EDIT_MSG:
+            msg_id = values['msg_id']
+            message = bot.edit_message_text(msg, chat_id, msg_id, parse_mode=ParseMode.MARKDOWN)
+            if edit:
+                session.json_set(SessionKeys.SCRAPER_MSG, message['message_id'])
         elif action == BotResp.ACTION:
             bot.send_message(chat_id, msg, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
             user_data['session'] = session
@@ -126,32 +141,7 @@ def on_bot_scrape_select(bot, update, user_data):
         default_scrape(user_data)
     query.answer()
     return bot_scrape_handler(bot, user_data, chat_id)
-    # return BotStates.BOT_SCRAPE
 
-    # while True:
-    #     action, msg, keyboard = get_redis_key(session, 'bot_msg')
-    #     print('debug msg')
-    #     print(msg)
-    #     if keyboard:
-    #         keyboard = keyboards.action_keyboards_map.get(keyboard)
-    #     else:
-    #         keyboard = ReplyKeyboardRemove()
-    #     if action == BotResp.MSG:
-    #         bot.send_message(chat_id, msg, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
-    #     elif action == BotResp.ACTION:
-    #         bot.send_message(chat_id, msg, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
-    #         user_data['session'] = session
-    #         return BotStates.BOT_SCRAPE
-    #     else:
-    #         bot.send_message(chat_id, msg, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
-    #         try:
-    #             del user_data['session']
-    #         except KeyError:
-    #             pass
-    #         session.clear_keys('bot_msg', 'scraper_msg')
-    #         reply_markup = keyboards.create_main_menu_keyboard()
-    #         bot.send_message(chat_id, BotMessages.MAIN, reply_markup=reply_markup)
-    #         return BotStates.BOT_MENU
 
 
 def on_bot_scrape(bot, update, user_data):
@@ -160,28 +150,6 @@ def on_bot_scrape(bot, update, user_data):
     session = user_data['session']
     session.json_set(SessionKeys.SCRAPER_MSG, text)
     return bot_scrape_handler(bot, user_data, chat_id)
-    # while True:
-    #     action, msg, keyboard = get_redis_key(session, 'bot_msg')
-    #     if keyboard:
-    #         keyboard = keyboards.action_keyboards_map.get(keyboard)
-    #     else:
-    #         keyboard = ReplyKeyboardRemove()
-    #     if action == BotResp.MSG:
-    #         bot.send_message(chat_id, msg, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
-    #     elif action == BotResp.ACTION:
-    #         bot.send_message(chat_id, msg, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
-    #         user_data['session'] = session
-    #         return BotStates.BOT_SCRAPE
-    #     else:
-    #         bot.send_message(chat_id, msg, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
-    #         try:
-    #             del user_data['session']
-    #         except KeyError:
-    #             pass
-    #         session.clear_keys('bot_msg', 'scraper_msg')
-    #         reply_markup = keyboards.create_main_menu_keyboard()
-    #         bot.send_message(chat_id, BotMessages.MAIN, reply_markup=reply_markup)
-    #         return BotStates.BOT_MENU
 
 
 def on_user_username(bot, update, user_data):

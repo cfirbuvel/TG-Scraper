@@ -286,7 +286,13 @@ async def scrape_process(session, clients, scheduled_groups=False):
     target_groups_from = []
     target_groups_to = []
 
-    for i, client_data in enumerate(clients):
+    clients_copy = clients.copy()
+    i = 0
+    while True:
+        try:
+            client_data = clients[i]
+        except IndexError:
+            break
         client = client_data[0]
         chats = []
         result = await client(GetDialogsRequest(
@@ -300,18 +306,25 @@ async def scrape_process(session, clients, scheduled_groups=False):
         set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg})
         chats.extend(result.chats)
         if result.messages:
+            group_from = None
+            group_to = None
             for chat in chats:
-                if not hasattr(chat, 'megagroup'):
+                if not (hasattr(chat, 'megagroup') and hasattr(chat, 'access_hash')):
                     continue
-                try:
-                    if chat.access_hash is not None:
-                        if chat.id == chat_id_from:
-                            target_groups_from.append(chat)
-                        elif chat.id == chat_id_to:
-                            target_groups_to.append(chat)
-                except:
-                    pass
-
+                if chat.access_hash is not None:
+                    if chat.id == chat_id_from:
+                        group_from = chat
+                    elif chat.id == chat_id_to:
+                        group_to = chat
+            if group_from and group_to:
+                target_groups_from.append(group_from)
+                target_groups_to.append(group_to)
+                i += 1
+            else:
+                acc = client_data[1]
+                msg = 'Client {} wasn\'t added to groups. Skipping client'.format(escape_markdown(acc.username))
+                set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg})
+                del clients[i]
         sleep(1)
 
     if len(target_groups_from) != len(clients) or len(target_groups_to) != len(clients):
@@ -337,7 +350,6 @@ async def scrape_process(session, clients, scheduled_groups=False):
         offset += len(participants.users)
         sleep(1)
 
-    clients_copy = clients.copy()
     groups_participants = []
 
     added_participants = ScrapedAccount.select(ScrapedAccount.user_id)\
@@ -426,7 +438,7 @@ async def scrape_process(session, clients, scheduled_groups=False):
             groups_participants.pop(p_i)
             continue
         except (UserPrivacyRestrictedError, UserNotMutualContactError, InputUserDeactivatedError, ChatAdminRequiredError,
-                UserChannelsTooMuchError, UserBlockedError) as ex:
+                UserChannelsTooMuchError, UserBlockedError, UserChannelsTooMuchError) as ex:
             msg = 'Client {} can\'t add user.\n'.format(acc.phone)
             msg += 'Reason: {}'.format(ex)
             set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg})

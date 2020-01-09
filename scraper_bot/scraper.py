@@ -5,6 +5,7 @@ import time
 import uuid
 import random
 import traceback
+import sys
 
 from telegram.ext import run_async
 from telegram.utils.helpers import escape_markdown
@@ -281,6 +282,9 @@ async def scrape_process(session, clients, scheduled_groups=False):
             msg = 'User _{}_ don\'t have permission to invite users to channels.'.format(acc.phone)
             set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg})
             break
+        except UserChannelsTooMuchError:
+            msg = 'User _{}_ is in too many channels.'.format(acc.phone)
+            set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg})
         time.sleep(3)
 
     target_groups_from = []
@@ -295,42 +299,50 @@ async def scrape_process(session, clients, scheduled_groups=False):
             break
         client = client_data[0]
         chats = []
-        result = await client(GetDialogsRequest(
-            offset_date=None,
-            offset_id=0,
-            offset_peer=InputPeerEmpty(),
-            limit=chunk_size,
-            hash=0
-        ))
         msg = 'Scraping client _{}_ groups'.format(client.api_id)
         set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg})
-        chats.extend(result.chats)
-        if result.messages:
-            group_from = None
-            group_to = None
-            for chat in chats:
-                if not (hasattr(chat, 'megagroup') and hasattr(chat, 'access_hash')):
-                    continue
-                if chat.access_hash is not None:
-                    if chat.id == chat_id_from:
-                        group_from = chat
-                    elif chat.id == chat_id_to:
-                        group_to = chat
-            if group_from and group_to:
-                target_groups_from.append(group_from)
-                target_groups_to.append(group_to)
-                i += 1
-            else:
-                acc = client_data[1]
-                msg = 'Client {} wasn\'t added to groups. Skipping client'.format(escape_markdown(acc.username))
-                set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg})
-                del clients[i]
+        # offset_id = 0
+        # while True:
+        #     result = await client(GetDialogsRequest(
+        #         offset_date=None,
+        #         offset_id=offset_id,
+        #         offset_peer=InputPeerEmpty(),
+        #         limit=chunk_size,
+        #         hash=0
+        #     ))
+        #     if not len(result.chats):
+        #         break
+        #     chats.extend(result.chats)
+        #     offset_id = result.chats[-1].id
+        group_from = None
+        group_to = None
+        async for chat in client.iter_dialogs():
+            # print(chat)
+            # print(dir(chat))
+            #chat = chat.input_entity
+            chat = chat.entity
+            if not (hasattr(chat, 'megagroup') and hasattr(chat, 'access_hash')):
+                continue
+            if chat.access_hash is not None:
+                if chat.id == chat_id_from:
+                    group_from = chat
+                elif chat.id == chat_id_to:
+                    group_to = chat
+        if group_from and group_to:
+            target_groups_from.append(group_from)
+            target_groups_to.append(group_to)
+            i += 1
+        else:
+            acc = client_data[1]
+            msg = 'Client {} wasn\'t added to groups. Skipping client'.format(escape_markdown(acc.username))
+            set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg})
+            del clients[i]
         sleep(1)
 
-    if len(target_groups_from) != len(clients) or len(target_groups_to) != len(clients):
-        msg = 'All accounts should be members of both groups.'
-        await stop_scrape(session, clients, msg)
-        return
+    # if len(target_groups_from) != len(clients) or len(target_groups_to) != len(clients):
+    #     msg = 'All accounts should be members of both groups.'
+    #     await stop_scrape(session, clients, msg)
+    #     return
 
     offset = 0
     limit = 0

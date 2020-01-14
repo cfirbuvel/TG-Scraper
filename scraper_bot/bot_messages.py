@@ -7,6 +7,7 @@ class BotMessages:
     USER_PHONE = 'Please enter user phone number:'
     USER_PHONE_INVALID = 'Entered phone is not valid.\n' \
                          'Please enter correct phone number:'
+    USER_PHONE_EXISTS = 'User with entered phone already exists.'
     USER_SAVED = 'User *{}* was created!'
     USERS_LIST = 'Please select a user:'
     SELECTED_USER = 'User:\n' \

@@ -198,16 +198,21 @@ def on_user_phone(bot, update, user_data):
         bot.send_message(chat_id, BotMessages.USER_PHONE_INVALID, reply_markup=keyboards.create_back_keyboard(False))
         return BotStates.BOT_USER_PHONE
     else:
-        acc_data = user_data['user_creds']
-        account = Account.create(username=acc_data['username'], api_id=acc_data['api_id'],
-                                 api_hash=acc_data['api_hash'], phone=text)
-        username = escape_markdown(account.username)
-        print('debug username')
-        print(username)
-        msg = BotMessages.USER_SAVED.format(username)
-        bot.send_message(chat_id, msg, reply_markup=ReplyKeyboardRemove(), parse_mode=ParseMode.MARKDOWN)
-        bot.send_message(chat_id, BotMessages.MAIN, reply_markup=keyboards.create_main_menu_keyboard(), parse_mode=ParseMode.MARKDOWN)
-        return BotStates.BOT_MENU
+        try:
+            Account.get(phone=text)
+        except Account.DoesNotExist:
+            acc_data = user_data['user_creds']
+            account = Account.create(username=acc_data['username'], api_id=acc_data['api_id'],
+                                     api_hash=acc_data['api_hash'], phone=text)
+            username = escape_markdown(account.username)
+            msg = BotMessages.USER_SAVED.format(username)
+            bot.send_message(chat_id, msg, reply_markup=ReplyKeyboardRemove(), parse_mode=ParseMode.MARKDOWN)
+            bot.send_message(chat_id, BotMessages.MAIN, reply_markup=keyboards.create_main_menu_keyboard(),
+                             parse_mode=ParseMode.MARKDOWN)
+            return BotStates.BOT_MENU
+        else:
+            bot.send_message(chat_id, BotResp.USER_PHONE_EXISTS, reply_markup=keyboards.create_back_keyboard(False))
+            return BotStates.BOT_USER_PHONE
 
 
 def on_user_list(bot, update):

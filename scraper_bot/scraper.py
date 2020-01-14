@@ -301,25 +301,9 @@ async def scrape_process(session, clients, scheduled_groups=False):
         chats = []
         msg = 'Scraping client _{}_ groups'.format(client.api_id)
         set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg})
-        # offset_id = 0
-        # while True:
-        #     result = await client(GetDialogsRequest(
-        #         offset_date=None,
-        #         offset_id=offset_id,
-        #         offset_peer=InputPeerEmpty(),
-        #         limit=chunk_size,
-        #         hash=0
-        #     ))
-        #     if not len(result.chats):
-        #         break
-        #     chats.extend(result.chats)
-        #     offset_id = result.chats[-1].id
         group_from = None
         group_to = None
         async for chat in client.iter_dialogs():
-            # print(chat)
-            # print(dir(chat))
-            #chat = chat.input_entity
             chat = chat.entity
             if not (hasattr(chat, 'megagroup') and hasattr(chat, 'access_hash')):
                 continue

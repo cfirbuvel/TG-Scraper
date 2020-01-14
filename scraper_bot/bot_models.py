@@ -14,7 +14,7 @@ class BaseModel(Model):
 class Account(BaseModel):
     api_id = IntegerField()
     api_hash = CharField(max_length=255)
-    phone = CharField(max_length=255)
+    phone = CharField(max_length=255, unique=True)
     username = CharField(max_length=255, null=True, default=None)
 
 

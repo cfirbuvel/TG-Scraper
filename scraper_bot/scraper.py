@@ -120,7 +120,7 @@ async def scrape_process(session, clients, scheduled_groups=False):
                 continue
             code = enter_confirmation_code_action(acc.phone, acc.username, session)
             if code is None:
-                await stop_scrape(session, clients)
+                set_bot_msg(session, {'action': BotResp.EXIT, 'msg': BotMessages.SCRAPE_CANCELLED})
                 return
             skip = False
             while True:
@@ -138,7 +138,7 @@ async def scrape_process(session, clients, scheduled_groups=False):
                     if resp == 'Enter again':
                         code = enter_confirmation_code_action(acc.phone, acc.username, session)
                         if code is None:
-                            await stop_scrape(session, clients)
+                            set_bot_msg(session, {'action': BotResp.EXIT, 'msg': BotMessages.SCRAPE_CANCELLED})
                             return
                     elif resp == 'Resend code':
                         code_sent = await send_confirmation_code(session, client, acc.phone, acc.username)
@@ -146,19 +146,19 @@ async def scrape_process(session, clients, scheduled_groups=False):
                             continue
                         code = enter_confirmation_code_action(acc.phone, acc.username, session)
                         if code is None:
-                            await stop_scrape(session, clients)
+                            set_bot_msg(session, {'action': BotResp.EXIT, 'msg': BotMessages.SCRAPE_CANCELLED})
                             return
                     elif resp == 'Skip user':
                         skip = True
                         break
                     elif resp == '❌ Cancel':
-                        await stop_scrape(session, clients)
+                        set_bot_msg(session, {'action': BotResp.EXIT, 'msg': BotMessages.SCRAPE_CANCELLED})
                         return
             if skip:
                 continue
     if not clients:
         msg = 'You either didn\'t add users or verification for all users failed'
-        await stop_scrape(session, clients, msg)
+        set_bot_msg(session, {'action': BotResp.EXIT, 'msg': msg})
         return
 
     chats = []
@@ -201,13 +201,12 @@ async def scrape_process(session, clients, scheduled_groups=False):
         set_bot_msg(session, {'action': BotResp.ACTION, 'msg': msg, 'keyboard': 'stop_scrape'})
         g_index = get_redis_key(session, SessionKeys.SCRAPER_MSG)
         if g_index == '❌ Stop':
-            await stop_scrape(session, clients)
+            set_bot_msg(session, {'action': BotResp.EXIT, 'msg': BotMessages.SCRAPE_CANCELLED})
             return
         try:
             chat_from = groups[int(g_index)]
         except (ValueError, IndexError):
             set_bot_msg(session, {'action': BotResp.MSG, 'msg': 'Invalid group number'})
-            await stop_scrape(session, clients)
             return
         chat_id_from = chat_from.id
 
@@ -221,13 +220,12 @@ async def scrape_process(session, clients, scheduled_groups=False):
         set_bot_msg(session, {'action': BotResp.ACTION, 'msg': msg, 'keyboard': 'stop_scrape'})
         g_index = get_redis_key(session, SessionKeys.SCRAPER_MSG)
         if g_index == '❌ Stop':
-            await stop_scrape(session, clients)
+            set_bot_msg(session, {'action': BotResp.EXIT, 'msg': BotMessages.SCRAPE_CANCELLED})
             return
         try:
             chat_to = targets[int(g_index)]
         except (ValueError, IndexError):
             set_bot_msg(session, {'action': BotResp.MSG, 'msg': 'Invalid group number'})
-            await stop_scrape(session, clients)
             return
 
         chat_id_to = chat_to.id
@@ -290,7 +288,6 @@ async def scrape_process(session, clients, scheduled_groups=False):
     target_groups_from = []
     target_groups_to = []
 
-    clients_copy = clients.copy()
     i = 0
     while True:
         try:
@@ -442,7 +439,6 @@ async def scrape_process(session, clients, scheduled_groups=False):
             acc = ScrapedAccount.create(user_id=user_id, run=run)
         time.sleep(1)
         i += 1
-    await disconnect_clients(clients_copy)
     return scheduled_groups
 
 
@@ -455,7 +451,8 @@ def default_scrape(user_data):
     session = user_data['session']
     loop = asyncio.new_event_loop()
     clients = create_clients(loop)
-    loop.run_until_complete(scrape_process(session, clients))
+    loop.run_until_complete(scrape_process(session, clients.copy()))
+    loop.run_until_complete(disconnect_clients(clients))
     # scrape_process(session, clients)
     msg = 'Completed!'
     set_bot_msg(session, {'action': BotResp.EXIT, 'msg': msg})
@@ -470,9 +467,10 @@ def scheduled_scrape(user_data, hours=24):
     loop = asyncio.new_event_loop()
     clients = create_clients(loop)
     while True:
-        groups = loop.run_until_complete(scrape_process(session, clients, scheduled_groups=groups))
+        groups = loop.run_until_complete(scrape_process(session, clients.copy(), scheduled_groups=groups))
         if not groups:
-            return
+            session.json_set(SessionKeys.RUNNING, False)
+            break
         now = datetime.datetime.now()
         next_time = now + datetime.timedelta(hours=24)
         next_time_str = next_time.strftime('%B %d, %H:%M')
@@ -485,7 +483,8 @@ def scheduled_scrape(user_data, hours=24):
             stop = get_exit_key(session)
             if stop:
                 session.json_set(SessionKeys.RUNNING, False)
-                return
+                break
             time.sleep(interval_secs)
+    loop.run_until_complete(disconnect_clients(clients))
 
 

@@ -85,6 +85,14 @@ def create_phone_invalid_keyboard():
     return ReplyKeyboardMarkup(buttons)
 
 
+def skip_user_keyboard():
+    buttons = [
+        [KeyboardButton('Skip user')],
+        [KeyboardButton('❌ Cancel')]
+    ]
+    return ReplyKeyboardMarkup(buttons)
+
+
 def stop_scrape_keyboard():
     buttons = [
         [KeyboardButton('❌ Stop')]
@@ -94,5 +102,6 @@ def stop_scrape_keyboard():
 
 action_keyboards_map = {
     'phone_invalid': create_phone_invalid_keyboard(),
+    'skip_user': skip_user_keyboard(),
     'stop_scrape': stop_scrape_keyboard()
 }

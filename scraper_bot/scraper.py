@@ -87,11 +87,9 @@ async def send_confirmation_code(session, client, phone, username):
 def enter_confirmation_code_action(phone, username, session):
     msg = 'Enter the code for({} - {})\n' \
           'Please include spaces between numbers, e.g. _41 978_ (code expires otherwise):'.format(phone, escape_markdown(username))
-    set_bot_msg(session, {'action': BotResp.ACTION, 'msg': msg, 'keyboard': 'stop_scrape'})
+    set_bot_msg(session, {'action': BotResp.ACTION, 'msg': msg, 'keyboard': 'skip_user'})
     code = get_redis_key(session, SessionKeys.SCRAPER_MSG)
-    if code == '❌ Stop':
-        code = None
-    else:
+    if code not in ('❌ Cancel', 'Skip user'):
         code = code.replace(' ', '')
     return code
 #
@@ -143,61 +141,50 @@ async def scrape_process(session, scheduled_groups=False):
     i = 0
     while True:
         try:
-            client = clients[i][0]
+            client, acc, _ = clients[i]
         except IndexError:
             break
         is_authorized = await client.is_user_authorized()
-        skip = False
         if not is_authorized:
             code_sent = await send_confirmation_code(session, client, acc.phone, acc.username)
-            if not code_sent:
-                skip = True
-            else:
-                code = enter_confirmation_code_action(acc.phone, acc.username, session)
-                if code is None:
-                    set_bot_msg(session, {'action': BotResp.EXIT, 'msg': BotMessages.SCRAPE_CANCELLED})
-                    await disconnect_clients(clients)
-                    return
+            signed_in = False
+            stop = False
+            if code_sent:
                 while True:
-                    try:
-                        await client.sign_in(acc.phone, code)
-                        break
-                    except (PhoneCodeInvalidError, PhoneCodeExpiredError) as ex:
-                        if type(ex) == PhoneCodeExpiredError:
-                            msg = 'Entered code for *{}* has expired.'
-                        else:
-                            msg = 'Entered code for *{}* is not valid.'
-                        msg = msg.format(escape_markdown(acc.username))
-                        set_bot_msg(session, {'action': BotResp.ACTION, 'msg': msg, 'keyboard': 'phone_invalid'})
-                        resp = get_redis_key(session, SessionKeys.SCRAPER_MSG)
-                        if resp == 'Enter again':
-                            code = enter_confirmation_code_action(acc.phone, acc.username, session)
-                            if code is None:
-                                set_bot_msg(session, {'action': BotResp.EXIT, 'msg': BotMessages.SCRAPE_CANCELLED})
-                                await disconnect_clients(clients)
-                                return
-                        elif resp == 'Resend code':
-                            code_sent = await send_confirmation_code(session, client, acc.phone, acc.username)
-                            if not code_sent:
-                                skip = True
-                                break
-                            code = enter_confirmation_code_action(acc.phone, acc.username, session)
-                            if code is None:
-                                set_bot_msg(session, {'action': BotResp.EXIT, 'msg': BotMessages.SCRAPE_CANCELLED})
-                                await disconnect_clients(clients)
-                                return
-                        elif resp == 'Skip user':
-                            skip = True
-                            break
-                        elif resp == '❌ Cancel':
-                            set_bot_msg(session, {'action': BotResp.EXIT, 'msg': BotMessages.SCRAPE_CANCELLED})
-                            await disconnect_clients(clients)
-                            return
-        if skip:
-            await client.disconnect()
-            clients.pop(i)
-        else:
-            i += 1
+                    code = enter_confirmation_code_action(acc.phone, acc.username, session)
+                    if code == '❌ Cancel':
+                        stop = True
+                    elif code != 'Skip user':
+                        try:
+                            await client.sign_in(acc.phone, code)
+                            signed_in = True
+                        except (PhoneCodeInvalidError, PhoneCodeExpiredError) as ex:
+                            if type(ex) == PhoneCodeExpiredError:
+                                msg = 'Entered code for *{}* has expired.'
+                            else:
+                                msg = 'Entered code for *{}* is not valid.'
+                            msg = msg.format(escape_markdown(acc.username))
+                            set_bot_msg(session, {'action': BotResp.ACTION, 'msg': msg, 'keyboard': 'phone_invalid'})
+                            resp = get_redis_key(session, SessionKeys.SCRAPER_MSG)
+                            if resp == 'Enter again':
+                                continue
+                            elif resp == 'Resend code':
+                                code_sent = await send_confirmation_code(session, client, acc.phone, acc.username)
+                                if code_sent:
+                                    continue
+                            elif resp == '❌ Cancel':
+                                stop = True
+                    break
+            if stop:
+                set_bot_msg(session, {'action': BotResp.EXIT, 'msg': BotMessages.SCRAPE_CANCELLED})
+                await disconnect_clients(clients)
+                return
+            elif not signed_in:
+                await client.disconnect()
+                clients.pop(i)
+                continue
+        i += 1
+
     if not clients:
         msg = 'You either didn\'t add users or verification for all users failed'
         set_bot_msg(session, {'action': BotResp.EXIT, 'msg': msg})

@@ -2,6 +2,7 @@ import re
 import threading
 
 from telegram import ParseMode, ReplyKeyboardRemove
+from telegram.ext import run_async
 from telegram.utils.helpers import escape_markdown
 
 from bot_enums import BotStates
@@ -52,7 +53,6 @@ def on_menu(bot, update, user_data):
         return BotStates.BOT_USERS_LIST
     elif callback_data == 'start_scrape':
         session = user_data.get('session')
-        print(session)
         if session:
             print(session.json_get(SessionKeys.RUNNING))
         if session and session.json_get(SessionKeys.RUNNING):
@@ -81,10 +81,10 @@ def on_bot_scrape_stop(bot, update, user_data):
     return BotStates.BOT_MENU
 
 
+@run_async
 def bot_scrape_handler(bot, user_data, chat_id):
     session = user_data['session']
     while True:
-        # action, msg, keyboard = get_redis_key(session, SessionKeys.BOT_MSG)
         values = get_redis_key(session, SessionKeys.BOT_MSG)
         action = values['action']
         msg = values['msg']
@@ -98,7 +98,7 @@ def bot_scrape_handler(bot, user_data, chat_id):
             else:
                 keyboard = None
         if action == BotResp.MSG:
-            message = bot.send_message(chat_id, msg, parse_mode=ParseMode.MARKDOWN, keyboard=keyboard)
+            message = bot.send_message(chat_id, msg, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
             if edit:
                 session.json_set(SessionKeys.SCRAPER_MSG, message['message_id'])
         elif action == BotResp.EDIT_MSG:
@@ -106,21 +106,14 @@ def bot_scrape_handler(bot, user_data, chat_id):
             message = bot.edit_message_text(msg, chat_id, msg_id, parse_mode=ParseMode.MARKDOWN)
             if edit:
                 session.json_set(SessionKeys.SCRAPER_MSG, message['message_id'])
-        elif action == BotResp.ACTION:
-            bot.send_message(chat_id, msg, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
-            user_data['session'] = session
-            return BotStates.BOT_SCRAPE
+        # elif action == BotResp.ACTION:
+        #     bot.send_message(chat_id, msg, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
+        #     user_data['session'] = session
+        #     # return BotStates.BOT_SCRAPE
         else:
             bot.send_message(chat_id, msg, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
             if not session.json_get(SessionKeys.RUNNING):
                 clear_session(session)
-            # continuous = session.json_get(SessionKeys.CONTINUOUS)
-            # if not continuous:
-            #     try:
-            #         del user_data['session']
-            #     except KeyError:
-            #         pass
-            # keys_to_clear = (SessionKeys.SCRAPER_MSG, SessionKeys.BOT_MSG, SessionKeys.EXIT_THREAD)
             reply_markup = keyboards.create_main_menu_keyboard()
             bot.send_message(chat_id, BotMessages.MAIN, reply_markup=reply_markup)
             return BotStates.BOT_MENU
@@ -128,20 +121,47 @@ def bot_scrape_handler(bot, user_data, chat_id):
 
 def on_bot_scrape_select(bot, update, user_data):
     chat_id = update.effective_chat.id
-    # msg_id = update.effective_message.message_id
+    msg_id = update.effective_message.message_id
     query = update.callback_query
     callback_data = query.data
+    if callback_data == 'back':
+        reply_markup = keyboards.create_main_menu_keyboard()
+        bot.edit_message_text(BotMessages.MAIN, chat_id, msg_id, reply_markup=reply_markup)
+        return BotStates.BOT_MENU
+    if callback_data == 'scrape_24':
+        scrape_24 = True
+    else:
+        scrape_24 = False
+    user_data['scrape_24'] = scrape_24
+    msg = 'Please select type of scrape:'
+    reply_markup = keyboards.scrape_type_keyboard()
+    bot.edit_message_text(msg, chat_id, msg_id, reply_markup=reply_markup)
+    query.answer()
+    return BotStates.BOT_SCRAPE_TYPE
+
+
+def on_bot_scrape_type(bot, update, user_data):
+    chat_id = update.effective_chat.id
+    msg_id = update.effective_message.message_id
+    query = update.callback_query
+    callback_data = query.data
+    if callback_data == 'back':
+        reply_markup = keyboards.scrape_keyboard()
+        bot.edit_message_text(BotMessages.SCRAPE, chat_id, msg_id, reply_markup=reply_markup)
+        query.answer()
+        return BotStates.BOT_SCRAPE_SELECT
     session = JsonRedis(host='localhost', port=6379, db=0)
     session.clear_keys(SessionKeys.BOT_MSG, SessionKeys.SCRAPER_MSG)
     session.json_set(SessionKeys.RUNNING, True)
     user_data['session'] = session
-    if callback_data == 'scrape_24':
-        scheduled_scrape(user_data, 24)
+    scrape_24 = user_data['scrape_24']
+    if scrape_24:
+        scheduled_scrape(user_data, callback_data, 24)
     else:
-        default_scrape(user_data)
+        default_scrape(user_data, callback_data)
     query.answer()
-    return bot_scrape_handler(bot, user_data, chat_id)
-
+    bot_scrape_handler(bot, user_data, chat_id)
+    return BotStates.BOT_MENU
 
 
 def on_bot_scrape(bot, update, user_data):
@@ -149,7 +169,7 @@ def on_bot_scrape(bot, update, user_data):
     text = update.effective_message.text
     session = user_data['session']
     session.json_set(SessionKeys.SCRAPER_MSG, text)
-    return bot_scrape_handler(bot, user_data, chat_id)
+    return BotStates.BOT_MENU
 
 
 def on_user_username(bot, update, user_data):

@@ -17,13 +17,20 @@ def main():
                 CommandHandler('start', handlers.on_start)
             ],
             BotStates.BOT_MENU: [
-                CallbackQueryHandler(handlers.on_menu, pass_user_data=True)
+                CallbackQueryHandler(handlers.on_menu, pass_user_data=True),
+                MessageHandler(Filters.text, handlers.on_bot_scrape, pass_user_data=True)
             ],
             BotStates.BOT_SCRAPE_SELECT: [
                 CallbackQueryHandler(handlers.on_bot_scrape_select, pass_user_data=True)
             ],
-            BotStates.BOT_SCRAPE: [
-                MessageHandler(Filters.text, handlers.on_bot_scrape, pass_user_data=True)
+            # BotStates.BOT_SCRAPE: [
+            #     MessageHandler(Filters.text, handlers.on_bot_scrape, pass_user_data=True)
+            # ],
+            # BotStates.BOT_SCRAPE_HANDLER: [
+            #     CallbackQueryHandler(handlers.on_bot_scrape_handler, pass_user_data=True)
+            # ],
+            BotStates.BOT_SCRAPE_TYPE: [
+                CallbackQueryHandler(handlers.on_bot_scrape_type, pass_user_data=True)
             ],
             BotStates.BOT_SCRAPE_STOP: [
                 CallbackQueryHandler(handlers.on_bot_scrape_stop, pass_user_data=True)

@@ -14,7 +14,17 @@ def create_main_menu_keyboard():
 def scrape_keyboard():
     reply_markup = [
         [InlineKeyboardButton('Scrape', callback_data='normal_scrape')],
-        [InlineKeyboardButton('Scrape every 24 hours', callback_data='scrape_24')]
+        [InlineKeyboardButton('Scrape every 24 hours', callback_data='scrape_24')],
+        [InlineKeyboardButton('↩ Back', callback_data='back')]
+    ]
+    return InlineKeyboardMarkup(reply_markup)
+
+
+def scrape_type_keyboard():
+    reply_markup = [
+        [InlineKeyboardButton('Scrape from all groups', callback_data='all')],
+        [InlineKeyboardButton('Scrape from specific group', callback_data='spec')],
+        [InlineKeyboardButton('↩ Back', callback_data='back')]
     ]
     return InlineKeyboardMarkup(reply_markup)
 
@@ -100,8 +110,17 @@ def stop_scrape_keyboard():
     return ReplyKeyboardMarkup(buttons, one_time_keyboard=True, resize_keyboard=True)
 
 
+def continue_keyboard():
+    buttons = [
+        [KeyboardButton('Continue')],
+        [KeyboardButton('❌ Cancel')]
+    ]
+    return ReplyKeyboardMarkup(buttons)
+
+
 action_keyboards_map = {
     'phone_invalid': create_phone_invalid_keyboard(),
     'skip_user': skip_user_keyboard(),
-    'stop_scrape': stop_scrape_keyboard()
+    'stop_scrape': stop_scrape_keyboard(),
+    'continue': continue_keyboard()
 }

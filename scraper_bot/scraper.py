@@ -108,26 +108,28 @@ def create_clients(loop):
     return clients
 
 
-async def scrape_specific_chat(session, scheduled_groups=False):
+async def scrape_specific_chat(session, scheduled_groups=False, skipped_clients=None):
     loop = asyncio.get_event_loop()
     clients = []
     config = read_config('config.ini')
     sessions_dir = os.path.abspath(config['sessions_dir'])
+    skipped_clients = [] if skipped_clients is None else skipped_clients
     if not os.path.isdir(sessions_dir):
         os.mkdir(sessions_dir)
     for acc in Account.select():
-        session_path = os.path.join(sessions_dir, '{}'.format(acc.phone))
-        while True:
-            client = TelegramClient(session_path, acc.api_id, acc.api_hash, loop=loop)
-            try:
-                await client.connect()
-                clients.append((client, acc, 0))
-                break
-            except AuthKeyDuplicatedError:
-                os.remove(session_path + '.session')
-                journal_path = session_path + '.session-journal'
-                if os.path.isfile(journal_path):
-                    os.remove(journal_path)
+        if acc.phone not in skipped_clients:
+            session_path = os.path.join(sessions_dir, '{}'.format(acc.phone))
+            while True:
+                client = TelegramClient(session_path, acc.api_id, acc.api_hash, loop=loop)
+                try:
+                    await client.connect()
+                    clients.append((client, acc, 0))
+                    break
+                except AuthKeyDuplicatedError:
+                    os.remove(session_path + '.session')
+                    journal_path = session_path + '.session-journal'
+                    if os.path.isfile(journal_path):
+                        os.remove(journal_path)
     i = 0
     while True:
         try:
@@ -169,6 +171,7 @@ async def scrape_specific_chat(session, scheduled_groups=False):
                 await stop_scrape(session, clients)
                 return
             elif not signed_in:
+                skipped_clients.append(acc.phone)
                 await client.disconnect()
                 clients.pop(i)
                 continue
@@ -313,11 +316,10 @@ async def scrape_specific_chat(session, scheduled_groups=False):
     i = 0
     while True:
         try:
-            client_data = clients[i]
+            client, acc, limit = clients[i]
         except IndexError:
             break
-        client = client_data[0]
-        msg = 'Scraping client _{}_ groups'.format(client.api_id)
+        msg = 'Scraping client *{}* groups'.format(escape_markdown(acc.username))
         set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg, 'keyboard': 'stop_scrape'})
         group_from = None
         group_to = None
@@ -476,29 +478,32 @@ async def scrape_specific_chat(session, scheduled_groups=False):
         time.sleep(3)
         i += 1
     await disconnect_clients(clients)
-    return scheduled_groups
+    return scheduled_groups, skipped_clients
 
 
-async def scrape_all_chats(session, scheduled_groups=False):
+async def scrape_all_chats(session, scheduled_groups=False, skipped_clients=None):
+    print('Start scrape debug')
     loop = asyncio.get_event_loop()
     clients = []
     config = read_config('config.ini')
     sessions_dir = os.path.abspath(config['sessions_dir'])
+    skipped_clients = [] if skipped_clients is None else skipped_clients
     if not os.path.isdir(sessions_dir):
         os.mkdir(sessions_dir)
     for acc in Account.select():
-        session_path = os.path.join(sessions_dir, '{}'.format(acc.phone))
-        while True:
-            client = TelegramClient(session_path, acc.api_id, acc.api_hash, loop=loop)
-            try:
-                await client.connect()
-                clients.append((client, acc, 0))
-                break
-            except AuthKeyDuplicatedError:
-                os.remove(session_path + '.session')
-                journal_path = session_path + '.session-journal'
-                if os.path.isfile(journal_path):
-                    os.remove(journal_path)
+        if not acc.phone in skipped_clients:
+            session_path = os.path.join(sessions_dir, '{}'.format(acc.phone))
+            while True:
+                client = TelegramClient(session_path, acc.api_id, acc.api_hash, loop=loop)
+                try:
+                    await client.connect()
+                    clients.append((client, acc, 0))
+                    break
+                except AuthKeyDuplicatedError:
+                    os.remove(session_path + '.session')
+                    journal_path = session_path + '.session-journal'
+                    if os.path.isfile(journal_path):
+                        os.remove(journal_path)
     i = 0
     while True:
         try:
@@ -540,6 +545,7 @@ async def scrape_all_chats(session, scheduled_groups=False):
                 await stop_scrape(session, clients)
                 return
             elif not signed_in:
+                skipped_clients.append(acc.phone)
                 await client.disconnect()
                 clients.pop(i)
                 continue
@@ -603,6 +609,8 @@ async def scrape_all_chats(session, scheduled_groups=False):
     except Run.DoesNotExist:
         run = Run.create(group_from='all', group_to=str(chat_to.id))
 
+    print('Adding clients debug')
+
     msg = 'Adding clients to target group'
     set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg, 'keyboard': 'stop_scrape'})
     main_client, main_client_acc, main_client_limit = clients[0]
@@ -650,11 +658,13 @@ async def scrape_all_chats(session, scheduled_groups=False):
             msg = 'User _{}_ was kicked from channel and cannot be added again.'.format(acc.phone)
             set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg})
         except ChatWriteForbiddenError:
-            msg = 'User _{}_ don\'t have permission to invite users to channels.'.format(acc.phone)
+            msg = 'User _{}_ don\'t have permission to invite users to channels.'.format(main_client_acc.phone)
             set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg})
-            break
         except UserChannelsTooMuchError:
             msg = 'User _{}_ is in too many channels.'.format(acc.phone)
+            set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg})
+        except ChatAdminRequiredError:
+            msg = 'Admin permissions required to add users to channel. Client *{}* not added.'.format(acc.phone)
             set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg})
         else:
             i += 1
@@ -664,30 +674,39 @@ async def scrape_all_chats(session, scheduled_groups=False):
         del clients[i]
         del all_chats[i]
 
-    offset = 0
-    limit = 0
-    memberIds = set()
-    while True:
-        try:
-            participants = await main_client(GetParticipantsRequest(
-                InputPeerChannel(chat_to.id, chat_to.access_hash),
-                ChannelParticipantsSearch(''),
-                offset, limit, hash=0
-            ))
-        except:
-            break
-        if not participants.users:
-            break
-        memberIds.update({member.id for member in participants.users})
-        offset += len(participants.users)
-        sleep(1)
+    print('Scraping participants debug')
+
+    member_ids = set()
+    j = 0
+    k = 0
+    chat_title = escape_markdown(chat_to.title)
+    msg = 'Scraping «{}» participants {}'.format(chat_title, spinner_symbols[j])
+    set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg, 'edit': True})
+    msg_id = get_redis_key(session, SessionKeys.SCRAPER_MSG)
+    try:
+        async for participant in main_client.iter_participants(chat_to):
+            stop = session.json_get(SessionKeys.SCRAPER_MSG) == '❌ Stop'
+            if stop:
+                await stop_scrape(session, clients)
+                return
+            member_ids.add(participant.id)
+            k += 1
+            if k % 200 == 0:
+                j = (j + 1) % 4
+                msg = 'Scraping «{}» participants {}'.format(chat_title, spinner_symbols[j])
+                set_bot_msg(session, {'action': BotResp.EDIT_MSG, 'msg': msg, 'edit': True, 'msg_id': msg_id})
+                msg_id = get_redis_key(session, SessionKeys.SCRAPER_MSG)
+    except ChatAdminRequiredError:
+        msg = 'Admin privileges required to get participants of selected groups. Bot will stop.'
+        await stop_scrape(session, clients, msg)
+        return
 
     all_chats = [[chat for chat in chats if chat.id != chat_to.id] for chats in all_chats]
 
     added_participants = ScrapedAccount.select(ScrapedAccount.user_id)\
         .where(ScrapedAccount.run == run).tuples()
     added_participants = {val[0] for val in added_participants}
-    added_participants.update(memberIds)
+    added_participants.update(member_ids)
 
     chats_participants = []
     all_participants = set()
@@ -696,49 +715,71 @@ async def scrape_all_chats(session, scheduled_groups=False):
         client, acc, client_limit = client_data
         client_participants = []
         for chat in all_chats[i]:
-            offset = 0
-            limit = 50
             chat_title = escape_markdown(chat.title)
             j = 0
-            msg = 'Scraping «{}» group participants for @{} {}'.format(chat_title, escape_markdown(acc.username), spinner_symbols[j])
+            k = 0
+            msg = 'Scraping «{}» history for @{} {}'.format(chat_title, escape_markdown(acc.username), spinner_symbols[j])
             set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg, 'edit': True})
             msg_id = get_redis_key(session, SessionKeys.SCRAPER_MSG)
-            while True:
-                if msg_id == '❌ Stop':
+            top_participants = defaultdict(int)
+            async for msg in client.iter_messages(chat):
+                stop = session.json_get(SessionKeys.SCRAPER_MSG) == '❌ Stop'
+                if stop:
                     await stop_scrape(session, clients)
                     return
-                try:
-                    participants = await client(GetParticipantsRequest(
-                        InputPeerChannel(chat.id, chat.access_hash),
-                        ChannelParticipantsSearch(''), offset, limit, hash=0
-                    ))
-                except (ChannelPrivateError, ChatAdminRequiredError):
-                    error_msg = 'User _{}_ don\'t have an access to «{}» group. Skipping group'.format(escape_markdown(acc.username), chat_title)
-                    set_bot_msg(session, {'action': BotResp.MSG, 'msg': error_msg, 'keyboard': 'stop_scrape'})
+                top_participants[msg.from_id] += 1
+                k += 1
+                if k == 10000:
                     break
-                if not participants.users:
-                    break
-                for user in participants.users:
-                    if user.id not in all_participants:
-                        client_participants.append((user.id, user.access_hash))
-                        all_participants.add(user.id)
-                        client_limit += 1
-                    if client_limit == 50:
-                        break
-                else:
-                    offset += len(participants.users)
-                    sleep(1)
+                if k % 200 == 0:
                     j = (j + 1) % 4
-                    msg = 'Scraping «{}» group participants for @{} {}'.format(chat_title,
+                    msg = 'Scraping «{}» history for @{} {}'.format(chat_title,
                                                                                escape_markdown(acc.username),
                                                                                spinner_symbols[j])
                     set_bot_msg(session, {'action': BotResp.EDIT_MSG, 'msg': msg, 'edit': True, 'msg_id': msg_id})
                     msg_id = get_redis_key(session, SessionKeys.SCRAPER_MSG)
+            top_participants = sorted(top_participants, key=lambda x: top_participants[x], reverse=True)
+            j = 0
+            k = 0
+            msg = 'Scraping «{}» most active participants for @{} {}'.format(chat_title,
+                                                                             escape_markdown(acc.username),
+                                                                             spinner_symbols[j])
+            set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg, 'edit': True})
+            msg_id = get_redis_key(session, SessionKeys.SCRAPER_MSG)
+            participants = {}
+            async for participant in client.iter_participants(chat):
+                stop = session.json_get(SessionKeys.SCRAPER_MSG) == '❌ Stop'
+                if stop:
+                    await stop_scrape(session, clients)
+                    return
+                if not participant.bot:
+                    participants[participant.id] = participant.access_hash
+                k += 1
+                if k % 200 == 0:
+                    j = (j + 1) % 4
+                    msg = 'Scraping «{}» most active participants for @{} {}'.format(chat_title,
+                                                                                     escape_markdown(acc.username),
+                                                                                     spinner_symbols[j])
+                    set_bot_msg(session, {'action': BotResp.EDIT_MSG, 'msg': msg, 'edit': True, 'msg_id': msg_id})
+                    msg_id = get_redis_key(session, SessionKeys.SCRAPER_MSG)
+
+            for participant_id in top_participants:
+                try:
+                    participant_hash = participants[participant_id]
+                except KeyError:
                     continue
-                break
-            if client_limit == 50:
-                break
+                if participant_id not in all_participants:
+                    client_participants.append((participant_id, participant_hash))
+                    all_participants.add(participant_id)
+                    client_limit += 1
+                if client_limit == 50:
+                    break
+            else:
+                continue
+            break
         chats_participants.append(client_participants)
+
+    print('Adding members debug')
 
     msg = 'Adding members to `{}` group.'.format(escape_markdown(chat_to.title))
     set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg, 'keyboard': 'stop_scrape'})
@@ -785,7 +826,7 @@ async def scrape_all_chats(session, scheduled_groups=False):
         time.sleep(3)
         i += 1
     await disconnect_clients(clients)
-    return scheduled_groups
+    return scheduled_groups, skipped_clients
 
 
 def delete_scraped_account(run_hash):
@@ -812,28 +853,29 @@ def scheduled_scrape(user_data, scrape_type='all', hours=24):
     seconds = hours * seconds_per_hour
     session = user_data['session']
     groups = None
+    skipped_clients = []
     loop = asyncio.new_event_loop()
     while True:
         if scrape_type == 'all':
-            groups = loop.run_until_complete(scrape_all_chats(session, scheduled_groups=groups))
+            groups, skipped_clients = loop.run_until_complete(scrape_all_chats(session, scheduled_groups=groups, skipped_clients=skipped_clients))
         else:
-            groups = loop.run_until_complete(scrape_specific_chat(session, scheduled_groups=groups))
+            groups, skipped_clients = loop.run_until_complete(scrape_specific_chat(session, scheduled_groups=groups, skipped_clients=skipped_clients))
         if not groups:
             session.json_set(SessionKeys.RUNNING, False)
             break
         now = datetime.datetime.now()
-        next_time = now + datetime.timedelta(hours=24)
+        next_time = now + datetime.timedelta(hours=hours)
         next_time_str = next_time.strftime('%B %d, %H:%M')
         msg = 'Scrape completed. Next will be started at {}'.format(next_time_str)
-        set_bot_msg(session, {'action': BotResp.EXIT, 'msg': msg})
+        set_bot_msg(session, {'action': BotResp.MSG, 'msg': msg})
 
-        num_intervals = hours * 60
-        interval_secs = seconds / num_intervals
-        for _ in range(num_intervals):
-            stop = get_exit_key(session)
-            if stop:
-                session.json_set(SessionKeys.RUNNING, False)
-                break
-            time.sleep(interval_secs)
+        # num_intervals = hours * 60
+        # interval_secs = seconds / num_intervals
+        # for _ in range(num_intervals):
+        #     stop = get_exit_key(session)
+        #     if stop:
+        #         session.json_set(SessionKeys.RUNNING, False)
+        #         break
+        #     time.sleep(interval_secs)
     loop.close()
 

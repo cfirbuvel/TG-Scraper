@@ -2,7 +2,6 @@ import asyncio
 
 from aiogram import executor
 from tortoise import run_async
-import uvloop
 
 from tg_scraper.bot import dp
 from tg_scraper.handlers import *
@@ -21,7 +20,6 @@ def on_start(dispatcher):
 
 
 if __name__ == '__main__':
-    uvloop.install()
     loop = asyncio.get_event_loop()
     loop.run_until_complete(init_db())
     executor.start_polling(dp, skip_updates=True)

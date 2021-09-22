@@ -92,7 +92,8 @@ async def init_db():
     config = ConfigParser()
     config.read('config.ini')
     await Tortoise.init(
-        db_url=config.get('Main', 'db_url'),
+        # db_url=config.get('Main', 'db_url'),
+        db_url='sqlite://db.sqlite3',
         modules={'models': ['tg_scraper.models',]}
     )
     # Generate the schema

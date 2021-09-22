@@ -206,14 +206,13 @@ async def main_process(chat_id, bot, queue, accounts):
                         try:
                             await add_to_group(client, to_group, user_id)
                         except (UserPrivacyRestrictedError, UserNotMutualContactError, InputUserDeactivatedError,
-                                UserChannelsTooMuchError, UserBlockedError, UserKickedError,
-                                UserDeactivatedBanError, UserBannedInChannelError,) as ex:
+                                UserChannelsTooMuchError, UserBlockedError, UserKickedError, UserBannedInChannelError,) as ex:
                             # msg = tg_error_msg(ex) + '\nSkipping user.'
                             # await bot.send_message(chat_id, sign_msg(msg))
                             logger.info(str(ex))
                             logger.info('Skipping user.')
                             continue
-                        except (PeerFloodError, FloodWaitError,) as ex:
+                        except (PeerFloodError, FloodWaitError, UserDeactivatedBanError) as ex:
                             # msg = tg_error_msg(ex) + '\nSkipping client.'
                             # await bot.send_message(chat_id, sign_msg(msg))
                             logger.info(str(ex))

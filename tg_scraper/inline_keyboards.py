@@ -1,119 +1,121 @@
 import asyncio
+import enum
 import functools
 
 from aiogram.types.inline_keyboard import InlineKeyboardButton, InlineKeyboardMarkup
-from aiogram.utils.markdown import escape_md
+from telethon.utils import get_display_name
 from tortoise import run_async
 
+from tg_scraper import Answer
 from tg_scraper.models import Account
 
 
-class InlineKeyboard(InlineKeyboardMarkup):
-    rows = None
+class InlineKeyboardMeta(type):
 
-    def __init__(self, *args, **kwargs):
-        self.rows = kwargs.pop('rows', self.rows)
-        super().__init__(*args, **kwargs)
-        self.build_keyboard()
+    def __init__(cls, *args, **kwargs):
+        pass
 
-    def build_keyboard(self):
-        for row in self.rows:
-            buttons = []
-            for item in row:
-                buttons.append(InlineKeyboardButton(**item))
-            self.row(*buttons)
-    # @classmethod
-    # async def create(cls):
-    #     self = cls()
-    #     await self.build_keyboard()
-    #     return self
+    def _build_markup(cls, rows):
+        keyboard = []
+        for row in rows:
+            keyboard.append([InlineKeyboardButton(**btn_data) for btn_data in row])
+        return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
+    @property
+    def main_menu(cls):
+        return cls._build_markup([
+            [{'text': 'Add account', 'callback_data': 'add_acc'}],
+            [{'text': 'Accounts', 'callback_data': 'list_accs'}],
+            [{'text': 'Start scrape', 'callback_data': 'scrape'}],
+        ])
 
-class MainMenuKeyboard(InlineKeyboard):
-    rows = [
-        [{'text': 'Add account', 'callback_data': 'add_acc'}],
-        [{'text': 'Accounts', 'callback_data': 'list_accs'}],
-        [{'text': 'Start scrape', 'callback_data': 'scrape'}],
-    ]
+    @property
+    def back(cls):
+        return cls._build_markup([
+            [{'text': '↩ Back', 'callback_data': 'back'}]
+        ])
 
+    @property
+    def cancel_back(cls):
+        return cls._build_markup([
+            [{'text': '❌ Cancel', 'callback_data': 'to_menu'}, {'text': '↩ Back', 'callback_data': 'back'}],
+        ])
 
-class BackKeyboard(InlineKeyboard):
-    rows = [
-        [{'text': '↩ Back', 'callback_data': 'back'}]
-    ]
+    @property
+    def yes_no(cls):
+        return cls._build_markup([
+            [{'text': '✖️ No', 'callback_data': 'no'}, {'text': '✔️ Yes', 'callback_data': 'yes'}]
+        ])
 
+    @property
+    def skip(cls):
+        return cls._build_markup([
+            [{'text': 'Skip', 'callback_data': 'skip'}]
+        ])
 
-class CancelBackKeyboard(InlineKeyboard):
-    rows = [
-        [{'text': 'Cancel', 'callback_data': 'cancel'}, {'text': '↩ Back', 'callback_data': 'back'}],
-    ]
+    @property
+    def enter_code(cls):
+        return cls._build_markup([
+            [{'text': 'Resend code', 'callback_data': Answer.RESEND}],
+            [{'text': 'Skip', 'callback_data': Answer.SKIP}],
+            # [{'text': '☠️ Stop Run', 'callback_data': Answer.STOP}],
+        ])
 
-
-class YesNoKeyboard(InlineKeyboard):
-    rows = [
-        [{'text': 'No', 'callback_data': 'no'}, {'text': 'Yes', 'callback_data': 'yes'}]
-    ]
-
-
-class SkipKeyboard(InlineKeyboard):
-    rows = [
-        [{'text': 'Skip', 'callback_data': 'skip'}]
-    ]
-
-
-class EnterCodeKeyboard(InlineKeyboard):
-    rows = [
-        [{'text': 'Resend code', 'callback_data': 'resend'}],
-        [{'text': 'Skip', 'callback_data': 'skip'}]
-    ]
-
-
-class AccountsKeyboard(InlineKeyboard):
-
-    def __init__(self, accounts, *args, **kwargs):
-        self.accounts = accounts
-        super().__init__(*args, **kwargs)
-
-    def build_keyboard(self):
-        for i, acc in enumerate(self.accounts):
-            text = '{}.  {}'.format(i, acc.get_label(escape_markdown=False))
+    @staticmethod
+    def accounts(data):
+        markup = InlineKeyboardMarkup()
+        for i, acc in enumerate(data, 1):
+            text = '{}.  {}'.format(i, str(acc))
             btn = InlineKeyboardButton(text, callback_data=str(acc.id))
-            # btn = {'text': text, 'callback_data': str(acc.id)}
-            self.row(btn)
-        self.row(InlineKeyboardButton('↩ Back', callback_data='back'))
+            markup.row(btn)
+        markup.row(InlineKeyboardButton('↩ Back', callback_data='to_menu'))
+        return markup
 
+    @property
+    def account_detail(cls):
+        return cls._build_markup([
+            [{'text': '🚫 Delete', 'callback_data': 'delete'}],
+            [{'text': '↩ Back', 'callback_data': 'back'}]
+        ])
 
-class ScrapeKeyboard(InlineKeyboard):
-    rows = [
-        [{'text': 'Run', 'callback_data': 'run_scrape'}],
-        [{'text': 'Repeat every 24 hours', 'callback_data': 'run_scrape_repeat'}],
-        [{'text': '↩ Back', 'callback_data': 'back'}],
-    ]
+    @property
+    def scrape_menu(cls):
+        return cls._build_markup([
+            [{'text': 'Run', 'callback_data': 'run_scrape'}],
+            [{'text': 'Run every day (until all users added)', 'callback_data': 'run_scrape_daily'}],
+            [{'text': '↩ Back', 'callback_data': 'to_menu'}],
+        ])
 
+    @property
+    def run_control(cls):
+        return cls._build_markup([
+            [{'text': '☠️ Stop Run', 'callback_data': Answer.STOP}],
+        ])
 
-class GroupsKeyboard(InlineKeyboardMarkup):
-
-    per_page = 50
-
-    def __init__(self, groups_data, page=1, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.build_keyboard(groups_data, page)
-
-    def build_keyboard(self, groups, page):
-        groups = list(groups.items())
-        pager = None
-        if len(groups) > self.per_page:
-            start = (page - 1) * self.per_page
-            end = page * self.per_page
-            pager = []
-            if page > 1:
-                pager.append(InlineKeyboardButton('⏪', callback_data='prev'))
-            pager.append(InlineKeyboardButton('Page {}'.format(page), callback_data='blank'))
-            if len(groups) > end:
-                pager.append(InlineKeyboardButton('⏩', callback_data='next'))
-            groups = groups[start:end]
-        for key, name in groups:
-            self.row(InlineKeyboardButton('{}.  {}'.format(key, name), callback_data=key))
+    @staticmethod
+    def groups(data, *, page=1, per_page=50, back_btn=False):
+        groups = list(data.items())
+        markup = InlineKeyboardMarkup()
+        # pager = None
+        # if len(groups) > per_page:
+        pager = []
+        start = (page - 1) * per_page
+        end = page * per_page
+        if page > 1:
+            pager.append(InlineKeyboardButton('⏪ Prev', callback_data='prev'))
+        if len(groups) > end:
+            pager.append(InlineKeyboardButton('⏩ Next', callback_data='next'))
+        groups = groups[start:end]
+        for i, data in enumerate(groups, start + 1):
+            id, name = data
+            markup.row(InlineKeyboardButton('{}.  {}'.format(i, name), callback_data=id))
         if pager:
-            self.row(*pager)
-        self.row(InlineKeyboardButton('↩ Back', callback_data='back'))
+            markup.row(*pager)
+        if back_btn:
+            markup.row(InlineKeyboardButton('↩ Back', callback_data='back'))
+        markup.row(InlineKeyboardButton('☠️ Stop Run', callback_data=Answer.STOP))
+        return markup
+
+
+class InlineKeyboard(metaclass=InlineKeyboardMeta):
+    pass

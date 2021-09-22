@@ -5,21 +5,18 @@ import operator
 from aiogram import types
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters import ContentTypeFilter, ForwardedMessageFilter, Regexp
-from aiogram.types.message import ContentType, ParseMode
-from aiogram.utils.markdown import escape_md
-from telethon import TelegramClient
-from telethon.errors import rpcerrorlist as tg_errors
-from telethon.sessions.string import StringSession
+from aiogram.types.message import ContentType
+from aiogram.utils.markdown import markdown_decoration as md
+from telethon.errors.rpcerrorlist import ApiIdInvalidError, PhoneNumberBannedError, FloodWaitError
 
-from tg_scraper.bot import dp
-from tg_scraper.inline_keyboards import InlineKeyboard,\
-    MainMenuKeyboard, BackKeyboard, CancelBackKeyboard, YesNoKeyboard, EnterCodeKeyboard, AccountsKeyboard, \
-    ScrapeKeyboard, GroupsKeyboard
+from tg_scraper import Answer
+from tg_scraper.bot import dp, lock
+from tg_scraper.inline_keyboards import InlineKeyboard as Keyboard
 from tg_scraper.models import Account
-from tg_scraper.states import MenuState, AccountState, ScrapeState, SelectGroupState
+from tg_scraper.states import MenuState, AddAccountState, ScrapeState, AccountsState
 from tg_scraper.pieces import main_menu
-from tg_scraper.utils import callback_query_filter, TgClient
-from tg_scraper import tasks
+from tg_scraper.utils import Queue, QueryDataFilter, sign_msg, task_running
+from tg_scraper.tasks import scrape_task, scrape_task_repeated
 
 
 logger = logging.getLogger(__name__)
@@ -30,14 +27,14 @@ async def start(message: types.Message):
     await main_menu(message)
 
 
-@dp.callback_query_handler(callback_query_filter('add_acc'), state=MenuState.MAIN)
+@dp.callback_query_handler(QueryDataFilter('add_acc'), state=MenuState.MAIN)
 async def add_acc(callback_query: types.CallbackQuery, state: FSMContext):
-    await AccountState.PHONE.set()
-    await callback_query.message.edit_text('Please enter phone number', reply_markup=BackKeyboard())
+    await AddAccountState.PHONE.set()
+    await callback_query.message.edit_text('Please enter phone number', reply_markup=Keyboard.back)
     await callback_query.answer()
 
 
-@dp.message_handler(ContentTypeFilter(ContentType.TEXT), state=AccountState.PHONE)
+@dp.message_handler(ContentTypeFilter(ContentType.TEXT), state=AddAccountState.PHONE)
 async def add_user_enter_phone(message: types.Message, state: FSMContext):
     phone = message.text.strip().replace(' ', '').replace('(', '').replace(')', '')
     logger.info('Phone entered')
@@ -48,213 +45,270 @@ async def add_user_enter_phone(message: types.Message, state: FSMContext):
     else:
         async with state.proxy() as user_data:
             user_data['add_user'] = {'phone': phone}
-        await AccountState.API_ID.set()
-        await message.answer('Please enter API Id', reply_markup=CancelBackKeyboard())
+        await AddAccountState.API_ID.set()
+        await message.answer('Please enter *API ID*', reply_markup=Keyboard.cancel_back)
         return
-    await message.answer('Please enter phone number', reply_markup=BackKeyboard())
-# +972 53877 5948
+    await message.answer('Please enter phone number', reply_markup=Keyboard.back)
 
 
-@dp.message_handler(ContentTypeFilter(ContentType.TEXT), state=AccountState.API_ID)
+@dp.callback_query_handler(QueryDataFilter('back'), state=AddAccountState.PHONE)
+async def add_user_enter_phone_back(callback_query: types.CallbackQuery, state: FSMContext):
+    await state.reset_data()
+    await main_menu(callback_query.message, callback_query=callback_query, edit=True)
+
+
+@dp.message_handler(ContentTypeFilter(ContentType.TEXT), state=AddAccountState.API_ID)
 async def add_user_enter_id(message: types.Message, state: FSMContext):
     api_id = message.text
-    reply_markup = CancelBackKeyboard()
+    reply_markup = Keyboard.cancel_back
     if not api_id.isdigit():
-        await message.answer('Please enter API Id\n'
-                             '_It should be a number_', reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN_V2)
+        await message.answer('Please enter *API ID*\n_It should be a number_', reply_markup=reply_markup)
         return
     async with state.proxy() as user_data:
         user_data['add_user']['api_id'] = api_id
-    await AccountState.API_HASH.set()
-    await message.answer('Please enter API hash', reply_markup=reply_markup)
+    await AddAccountState.API_HASH.set()
+    await message.answer('Please enter *API hash*', reply_markup=reply_markup)
 
 
-@dp.message_handler(ContentTypeFilter(ContentType.TEXT), state=AccountState.API_HASH)
+@dp.callback_query_handler(QueryDataFilter('back'), state=AddAccountState.API_ID)
+async def add_user_enter_id_back(callback_query: types.CallbackQuery, state: FSMContext):
+    await AddAccountState.PHONE.set()
+    await callback_query.message.edit_text('Please enter phone number', reply_markup=Keyboard.back)
+    await callback_query.answer()
+
+
+@dp.message_handler(ContentTypeFilter(ContentType.TEXT), state=AddAccountState.API_HASH)
 async def add_user_enter_hash(message: types.Message, state: FSMContext):
     async with state.proxy() as user_data:
         user_data['add_user']['api_hash'] = message.text.strip()
-    await AccountState.NAME.set()
-    await message.answer('Please enter account name', reply_markup=CancelBackKeyboard())
+    await AddAccountState.NAME.set()
+    await message.answer('Please enter account name', reply_markup=Keyboard.cancel_back)
 
 
-@dp.message_handler(ContentTypeFilter(ContentType.TEXT), state=AccountState.NAME)
+@dp.callback_query_handler(QueryDataFilter('back'), state=AddAccountState.API_HASH)
+async def add_user_enter_hash_back(callback_query: types.CallbackQuery, state: FSMContext):
+    await AddAccountState.API_ID.set()
+    await callback_query.message.edit_text('Please enter *API ID*', reply_markup=Keyboard.cancel_back)
+    await callback_query.answer()
+
+
+@dp.message_handler(ContentTypeFilter(ContentType.TEXT), state=AddAccountState.NAME)
 async def add_user_enter_name(message: types.Message, state: FSMContext):
     async with state.proxy() as user_data:
         data = user_data['add_user']
         await Account.create(name=message.text, **data)
-    await message.answer(r'_Account has been created\._', parse_mode=ParseMode.MARKDOWN_V2)
+    await message.answer(r'_Account has been created\._')
     await main_menu(message)
 
 
-@dp.callback_query_handler(callback_query_filter('back'), state=AccountState.NAME)
+@dp.callback_query_handler(QueryDataFilter('back'), state=AddAccountState.NAME)
 async def add_user_enter_name_back(callback_query: types.CallbackQuery, state: FSMContext):
-    await main_menu(callback_query.message, callback_query, edit=True)
-
-
-@dp.callback_query_handler(callback_query_filter('list_accs'), state=MenuState.MAIN)
-async def accounts(callback_query: types.CallbackQuery, state: FSMContext):
-    await AccountState.LIST.set()
-    accounts = await Account.all()
-    reply_markup = AccountsKeyboard(accounts)
-    await callback_query.message.edit_text('Accounts', reply_markup=reply_markup)
+    await AddAccountState.API_HASH.set()
+    await callback_query.message.edit_text('Please enter *API hash*', reply_markup=Keyboard.cancel_back)
     await callback_query.answer()
 
 
-@dp.callback_query_handler(callback_query_filter('scrape'), state=MenuState.MAIN)
+@dp.callback_query_handler(
+    QueryDataFilter('to_menu'),
+    state=(AddAccountState.API_ID, AddAccountState.API_HASH, AddAccountState.NAME,
+           AccountsState.LIST, ScrapeState.MAIN)
+)
+async def add_user_cancel(callback_query: types.CallbackQuery, state: FSMContext):
+    await state.reset_data()
+    await main_menu(callback_query.message, callback_query=callback_query, edit=True)
+
+
+@dp.callback_query_handler(QueryDataFilter('list_accs'), state=MenuState.MAIN)
+async def accounts_menu(callback_query: types.CallbackQuery, state: FSMContext):
+    await AccountsState.LIST.set()
+    accounts = await Account.all()
+    await callback_query.message.edit_text('Accounts', reply_markup=Keyboard.accounts(accounts))
+    await callback_query.answer()
+
+
+@dp.callback_query_handler(Regexp(r'[0-9]+'), state=AccountsState.LIST)
+async def accounts_list(callback_query: types.CallbackQuery, state: FSMContext):
+    await AccountsState.DETAIL.set()
+    id = int(callback_query.data)
+    acc = await Account.filter(id=id).first()
+    await state.update_data({'account_detail': {'id': id, 'name': acc.name}})
+    await callback_query.message.edit_text(acc.get_detail_text(), reply_markup=Keyboard.account_detail)
+    await callback_query.answer()
+
+
+@dp.callback_query_handler(QueryDataFilter('delete'), state=AccountsState.DETAIL)
+async def account_delete(callback_query: types.CallbackQuery, state: FSMContext):
+    await AccountsState.DELETE.set()
+    data = (await state.get_data())['account_detail']
+    msg = r'Delete *{}* account\?'.format(data['name'])
+    await callback_query.message.edit_text(msg, reply_markup=Keyboard.yes_no)
+    await callback_query.answer()
+
+
+@dp.callback_query_handler(QueryDataFilter('yes'), state=AccountsState.DELETE)
+async def account_delete_yes(callback_query: types.CallbackQuery, state: FSMContext):
+    await state.reset_state(with_data=False)
+    id = (await state.get_data())['account_detail']['id']
+    acc = await Account.filter(id=id).first()
+    await acc.delete()
+    async with state.proxy() as user_data:
+        del user_data['account_detail']
+    await AccountsState.LIST.set()
+    accounts = await Account.all()
+    await callback_query.message.edit_text('Accounts', reply_markup=Keyboard.accounts(accounts))
+    await callback_query.answer('Deleted')
+
+
+@dp.callback_query_handler(QueryDataFilter('no'), state=AccountsState.DELETE)
+async def account_delete_no(callback_query: types.CallbackQuery, state: FSMContext):
+    await AccountsState.DETAIL.set()
+    id = (await state.get_data())['account_detail']['id']
+    acc = await Account.filter(id=id).first()
+    await callback_query.message.edit_text(acc.get_detail_text(), reply_markup=Keyboard.account_detail)
+    await callback_query.answer()
+
+
+@dp.callback_query_handler(QueryDataFilter('back'), state=AccountsState.DETAIL)
+async def account_detail_back(callback_query: types.CallbackQuery, state: FSMContext):
+    await AccountsState.LIST.set()
+    accounts = await Account.all()
+    await callback_query.message.edit_text('Accounts', reply_markup=Keyboard.accounts(accounts))
+    await callback_query.answer()
+
+
+@dp.callback_query_handler(QueryDataFilter('scrape'), state=MenuState.MAIN)
 async def scrape(callback_query: types.CallbackQuery, state: FSMContext):
     await ScrapeState.MAIN.set()
-    await callback_query.message.edit_text('Select mode', reply_markup=ScrapeKeyboard())
+    await callback_query.message.edit_text('Select mode', reply_markup=Keyboard.scrape_menu)
     await callback_query.answer()
 
 
-# async def init_run(message, state):
-#     async with state.proxy() as user_data:
-#         data = user_data['run']
-#         active = data['active']
-#         failed = data['failed']
-#         account_ids = active + failed
-#         accounts = await Account.filter(id__not_in=account_ids)
-#         for acc in accounts:
-#             acc_session = AccountSession(acc)
-#             client = TelegramClient(acc_session, acc.api_id, acc.api_hash)
-#             await client.connect()
-#             if await client.is_user_authorized():
-#                 active.append(acc.id)
-#             else:
-#                 msg = 'Account *{} - {}*\n'.format(escape_md(acc.name), acc.phone)
-#                 try:
-#                     sent_code = await client.send_code_request(acc.phone)
-#                 except (rpcerrorlist.ApiIdInvalidError, rpcerrorlist.PhoneNumberBannedError, rpcerrorlist.FloodWaitError):
-#                     msg += 'API id or hash is not valid.'
-#                     await acc.set_invalid_details()
-#                 except rpcerrorlist.PhoneNumberBannedError:
-#                     msg += 'Phone number is banned and cannot be used anymore.'
-#                     await acc.set_phone_banned()
-#                 except rpcerrorlist.FloodWaitError as e:
-#                     msg += 'Account was banned for {} seconds (caused by code request)'.format(e.seconds)
-#                     await acc.set_flood_wait(e.seconds)
-#                 else:
-#                     user_data['run']['current'] = acc.id
-#                     user_data['run']['phone_code_hash'] = sent_code.phone_code_hash
-#                     msg += 'Enter the confirmation code\n_(please divide it with whitespaces, for example: 41 978)_'
-#                     await AccountState.ENTER_CODE.set()
-#                     reply_markup = await EnterCodeKeyboard.create()
-#                     await message.answer(msg, reply_markup=reply_markup)
-#                     return
-#                 await message.answer(msg)
-#                 failed.append(acc.id)
-#             await client.disconnect()
-#
-#         if active:
-#             user_data['run']['active'] = active
-#             acc = await Account.filter(id=active[0]).first()
-#             client = TelegramClient(AccountSession(acc), acc.api_id, acc.api_hash)
-#             await client.connect()
-#             async for dialog in client.iter_dialogs():
-#                 print(dialog)
-#                 print(dir(dialog))
-#                 print('\n')
-#         else:
-
-
-@dp.callback_query_handler(callback_query_filter('run_scrape'), state=ScrapeState.MAIN)
+@dp.callback_query_handler(QueryDataFilter('run_scrape', 'run_scrape_daily'), state=ScrapeState.MAIN)
 async def run_scrape(callback_query: types.CallbackQuery, state: FSMContext):
-    if not await Account.exists():
-        await callback_query.answer('Please add at least one account')
-    else:
+    message = callback_query.message
+    chat_id = message.chat.id
+    if task_running(chat_id):
+        answer = None
         await ScrapeState.RUNNING.set()
-        await callback_query.answer('420!')
-        asyncio.create_task(tasks.run_scrape(callback_query.bot, callback_query.message.chat.id, state))
+        await message.edit_text('<b>Another task is running.</b>', reply_markup=Keyboard.run_control)
+    elif not await Account.exists():
+        answer = 'Please add at least one account.'
+    else:
+        answer = '420!'
+        queue = Queue()
+        await state.set_data({'queue': queue})
+        await message.delete()
+        await ScrapeState.RUNNING.set()
+        if callback_query.data == 'run_scrape':
+            asyncio.create_task(scrape_task(chat_id, callback_query.bot, queue), name=str(chat_id))
+        else:
+            asyncio.create_task(scrape_task_repeated(chat_id, callback_query.bot, queue), name=str(chat_id))
+    await callback_query.answer(answer)
 
 
-@dp.message_handler(ContentTypeFilter(ContentType.TEXT), state=AccountState.ENTER_CODE)
+# @dp.callback_query_handler(QueryDataFilter('run_scrape_daily'), state=ScrapeState.MAIN)
+# async def run_scrape_daily(callback_data: types.CallbackQuery, state: FSMContext):
+#     pass
+
+
+# @dp.message_handler(commands=['stop'], state='*')
+@dp.callback_query_handler(QueryDataFilter(Answer.STOP), state='*')
+async def stop_run(callback_query: types.CallbackQuery, state: FSMContext):
+    message = callback_query.message
+    for task in asyncio.all_tasks():
+        if task.get_name() == str(message.chat.id):
+            await state.reset_state()
+            await message.delete()
+            # await message.edit_text(sign_msg('<b>Terminating run.</b>'), reply_markup=None)
+            await callback_query.answer('Stopping run.')
+            task.cancel()
+            return
+    await message.edit_text('<b>There is no active run at the moment.</b>', reply_markup=None)
+    await callback_query.answer()
+    await main_menu(message)
+
+
+@dp.message_handler(ContentTypeFilter(ContentType.TEXT), state=ScrapeState.ENTER_CODE)
 async def enter_code(message: types.Message, state: FSMContext):
-    # user_data = await state.get_data()
-    # acc = await Account.filter(id=user_data['login_id']).first()
-    # error_msg = None
-    code = message.text.replace(' ', '')
-    await ScrapeState.RUNNING.set()
-    await state.set_data({'answer': 'code', 'login_code': code})
-    # async with TgClient(acc) as client:
-    #     try:
-    #         await client.sign_in(acc.phone, code, phone_code_hash=user_data['phone_code_hash'])
-    #     except tg_errors.PhoneCodeInvalidError:
-    #         error_msg = 'Code is not valid'
-    #     except tg_errors.PhoneCodeExpiredError:
-    #         error_msg = 'Code has expired.'
-    #     # else:
-    #     #     await client.save_session()
-    # if error_msg:
-    #     await message.answer(error_msg, parse_mode=ParseMode.MARKDOWN, reply_markup=EnterCodeKeyboard())
-    # else:
-    #     await state.finish()
-    #     await state.update_data({'signed_in': True})
-    #     await message.answer('Signed in')
+    if task_running(message.chat.id):
+        code = message.text.replace(' ', '')
+        await ScrapeState.RUNNING.set()
+        queue = (await state.get_data())['queue']
+        queue.put_nowait(Answer.CODE)
+        await queue.join()
+        queue.put_nowait(code)
+    else:
+        await state.reset_state()
 
 
-# @dp.callback_query_handler(callback_query_filter('skip'), state=AccountState.ENTER_CODE)
-# async def skip_account(callback_query: types.CallbackQuery, state: FSMContext):
-#     await state.finish()
-#     await state.update_data({'signed_in': False})
-#     await callback_query.message.edit_text('Skipped')
-#     await callback_query.answer()
+@dp.callback_query_handler(QueryDataFilter(Answer.RESEND, Answer.SKIP), state=ScrapeState.ENTER_CODE)
+async def enter_code_actions(callback_query: types.CallbackQuery, state: FSMContext):
+    message = callback_query.message
+    if task_running(message.chat.id):
+        await ScrapeState.RUNNING.set()
+        queue = (await state.get_data())['queue']
+        queue.put_nowait(callback_query.data)
+        await callback_query.message.delete()
+        await callback_query.answer()
+    else:
+        await state.reset_state()
+        await callback_query.message.delete()
+        await callback_query.answer('There is no active run now.')
 
 
-@dp.callback_query_handler(state=AccountState.ENTER_CODE)
-async def resend_code(callback_query: types.CallbackQuery, state: FSMContext):
-    await ScrapeState.RUNNING.set()
-    await state.set_data({'answer': callback_query.data})
-    await callback_query.answer()
-    # user_data = await state.get_data()
-
-    # acc = await Account.filter(id=user_data['login_id']).first()
-    # async with TgClient(acc) as client:
-    #     message = callback_query.message
-    #     code_sent = await send_code(client, callback_query.bot, message.chat.id, state, msg_id=message.message_id)
-    # if not code_sent:
-    #     await state.update_data({'signed_in': False})
-    # await callback_query.answer()
-
-
-@dp.callback_query_handler(Regexp(r'[0-9]+'), state=SelectGroupState.GROUP_FROM)
+@dp.callback_query_handler(Regexp(r'[0-9]+'), state=ScrapeState.GROUP_FROM)
 async def select_group_from(callback_query: types.CallbackQuery, state: FSMContext):
-    group_key = callback_query.data
-    await callback_query.message.delete()
-    async with state.proxy() as user_data:
-        user_data['group_from'] = group_key
-        del user_data['groups'][group_key]
-        groups = user_data['groups']
-    await callback_query.answer('Group set')
-    reply_markup = GroupsKeyboard(groups)
-    await SelectGroupState.GROUP_TO.set()
-    await callback_query.message.answer('*Choose a group to add users to*', reply_markup=reply_markup,
-                                        parse_mode=ParseMode.MARKDOWN_V2)
+    message = callback_query.message
+    if task_running(message.chat.id):
+        group_key = callback_query.data
+        async with state.proxy() as user_data:
+            if 'groups' not in user_data:
+                queue = user_data['queue']
+                groups = queue.get_nowait()
+                queue.task_done()
+                user_data['groups'] = groups
+            else:
+                groups = user_data['groups']
+            user_data['group_from'] = group_key
+            del groups[group_key]
+        await ScrapeState.GROUP_TO.set()
+        msg = '<b>Choose a group to add users to</b>'
+        await message.edit_text(sign_msg(msg), reply_markup=Keyboard.groups(groups))
+        await callback_query.answer()
+    else:
+        await state.reset_state()
+        await message.delete()
+        await callback_query.answer('Run has finished or stopped.')
 
 
-@dp.callback_query_handler(Regexp(r'[0-9]'), state=SelectGroupState.GROUP_TO)
+@dp.callback_query_handler(Regexp(r'[0-9]+'), state=ScrapeState.GROUP_TO)
 async def select_group_to(callback_query: types.CallbackQuery, state: FSMContext):
-    group_key = callback_query.data
-    await ScrapeState.RUNNING.set()
-    async with state.proxy() as user_data:
-        user_data['group_to'] = group_key
-        del user_data['groups']
-    await callback_query.answer()
+    message = callback_query.message
+    await message.delete()
+    if task_running(message.chat.id):
+        user_data = await state.get_data()
+        queue = user_data['queue']
+        await ScrapeState.RUNNING.set()
+        queue.put_nowait((user_data['group_from'], callback_query.data))
+        await callback_query.answer()
+    else:
+        await state.reset_state()
+        await callback_query.answer('Run has finished or stopped.')
 
 
-@dp.callback_query_handler(Regexp(r'(prev|next)'), state=SelectGroupState)
+@dp.callback_query_handler(QueryDataFilter(['prev', 'next']), state=(ScrapeState.GROUP_FROM, ScrapeState.GROUP_TO))
 async def select_group_page(callback_query: types.CallbackQuery, state: FSMContext):
     op_map = {'prev': operator.sub, 'next': operator.add}
     op = op_map[callback_query.data]
     async with state.proxy() as user_data:
         page = op(user_data['page'], 1)
         user_data['page'] = page
-        groups = user_data['groups']
-    reply_markup = GroupsKeyboard(groups, page=page)
-    await callback_query.message.edit_reply_markup(reply_markup=reply_markup)
+        if 'groups' not in user_data:
+            queue = user_data['queue']
+            groups = queue.get_nowait()
+            queue.task_done()
+            user_data['groups'] = groups
+        else:
+            groups = user_data['groups']
+    await callback_query.message.edit_reply_markup(reply_markup=Keyboard.groups(groups, page=page))
     await callback_query.answer()
-
-
-@dp.callback_query_handler(callback_query_filter('blank'), state='*')
-async def answer_to_dummy(callback_query: types.CallbackQuery, state: FSMContext):
-    await callback_query.answer()
-

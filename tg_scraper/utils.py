@@ -1,6 +1,7 @@
 import asyncio
 import itertools
 import logging
+import re
 
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher.filters import Filter, StateFilter
@@ -12,25 +13,36 @@ from tortoise import run_async
 logger = logging.getLogger(__name__)
 
 
-def callback_query_filter(*callback_data):
-    callback_data = list(callback_data)
+class QueryDataFilter(Filter):
 
-    def actual_filter(update):
-        return type(update) == CallbackQuery and update.data in callback_data
+    def __init__(self, *args):
+        self.data = list(args)
 
-    return actual_filter
+    async def check(self, callback_query):
+        return callback_query.data in self.data
 
 
-async def wait_for_state_value(state, key, timeout=86400):
-    sleep_for = 0.3
-    while True:
-        try:
-            return (await state.get_data())[key]
-        except KeyError:
-            await asyncio.sleep(sleep_for)
-            timeout -= sleep_for
-            if timeout <= 0:
-                raise TimeoutError('Timeout exceeded.')
+# class TaskRunning(Filter):
+#
+#     async def check(self, obj):
+#         if type(obj) == CallbackQuery:
+#             obj = obj.message
+#         task_name = str(obj.chat.id)
+#         return any(task.get_name() == task_name for task in asyncio.all_tasks())
+
+
+def sign_msg(text, sign='💥'):
+    return sign + ' ' + text
+
+
+def tg_error_msg(exception):
+    msg = re.sub(r'\(caused by \w+\)\s*$', '', str(exception))
+    return msg
+
+
+def task_running(chat_id):
+    name = str(chat_id)
+    return any(task.get_name() == name for task in asyncio.all_tasks())
 
 
 class TgClient(TelegramClient):
@@ -39,7 +51,7 @@ class TgClient(TelegramClient):
         self.account = account
         session = StringSession(string=account.session_string)
         # session = AccountSession(account)
-        super().__init__(session, account.api_id, account.api_hash)
+        super().__init__(session, account.api_id, account.api_hash, *args, **kwargs)
 
     async def save_session(self):
         session_string = self.session.save()
@@ -53,6 +65,12 @@ class TgClient(TelegramClient):
     async def __aexit__(self, *args):
         await self.save_session()
         await self.disconnect()
+
+
+class Queue(asyncio.Queue):
+
+    def __deepcopy__(self, memo={}):
+        return self
 
 
 # # TODO: Change to Redis storage

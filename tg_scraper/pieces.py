@@ -1,10 +1,9 @@
 from aiogram.bot.bot import Bot
-from aiogram.types.message import ParseMode
 from aiogram.utils.markdown import escape_md
 from telethon.errors import rpcerrorlist as tg_errors
 
-from tg_scraper.inline_keyboards import MainMenuKeyboard, EnterCodeKeyboard
-from tg_scraper.states import MenuState, AccountState
+from tg_scraper.inline_keyboards import InlineKeyboard as Keyboard
+from tg_scraper.states import MenuState, AddAccountState
 from tg_scraper.utils import TgClient
 
 
@@ -43,7 +42,7 @@ from tg_scraper.utils import TgClient
 
 async def main_menu(message, callback_query=None, callback_answer=None, edit=False):
     await MenuState.MAIN.set()
-    params = {'text': 'Menu', 'reply_markup': MainMenuKeyboard()}
+    params = {'text': 'Menu', 'reply_markup': Keyboard.main_menu}
     if edit:
         await message.edit_text(**params)
     else:

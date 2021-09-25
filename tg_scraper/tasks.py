@@ -102,6 +102,7 @@ async def init_accounts(chat_id, bot, queue):
         async with TgClient(acc) as client:
             msg = '<i>Initializing account: <b>{}</b>.</i>'.format(md.quote(str(acc)))
             await bot.send_message(chat_id, sign_msg(msg))
+            user = None
             if await client.is_user_authorized():
                 user = await client.get_me()
             else:

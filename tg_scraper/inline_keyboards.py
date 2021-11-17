@@ -7,7 +7,7 @@ from telethon.utils import get_display_name
 from tortoise import run_async
 
 from tg_scraper import Answer
-from tg_scraper.models import Account
+from tg_scraper.models import Account, Settings
 
 
 class InlineKeyboardMeta(type):
@@ -24,9 +24,10 @@ class InlineKeyboardMeta(type):
     @property
     def main_menu(cls):
         return cls._build_markup([
-            [{'text': 'Add account', 'callback_data': 'add_acc'}],
-            [{'text': 'Accounts', 'callback_data': 'list_accs'}],
-            [{'text': 'Start scrape', 'callback_data': 'scrape'}],
+            [{'text': '🤖  Add account', 'callback_data': 'add_acc'}],
+            [{'text': '🗂  Accounts', 'callback_data': 'list_accs'}],
+            [{'text': '⚙️  Settings', 'callback_data': 'settings'}],
+            [{'text': '💥  Start scrape', 'callback_data': 'scrape'}],
         ])
 
     @property
@@ -77,6 +78,25 @@ class InlineKeyboardMeta(type):
             [{'text': '🚫 Delete', 'callback_data': 'delete'}],
             [{'text': '↩ Back', 'callback_data': 'back'}]
         ])
+
+    @property
+    def settings(cls):
+        return cls._build_markup([
+            [{'text': '🚷  Last seen filter', 'callback_data': 'status_filter'}],
+            [{'text': '⏱  Accounts invite delay', 'callback_data': 'join_delay'}],
+            [{'text': '↩ Back', 'callback_data': 'to_menu'}]
+        ])
+
+    def status_filter(cls, current_value):
+        markup = []
+        for status in Settings.Status:
+            text = status.verbose_name
+            val = status.value
+            if val == current_value:
+                text += '  💚'
+            markup.append([{'text': text, 'callback_data': str(val)}])
+        markup.append([{'text': '↩ Back', 'callback_data': 'settings'}])
+        return cls._build_markup(markup)
 
     @property
     def scrape_menu(cls):

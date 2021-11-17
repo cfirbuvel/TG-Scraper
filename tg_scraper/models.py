@@ -3,11 +3,11 @@ from configparser import ConfigParser
 import datetime
 import enum
 
-from aiogram.utils.markdown import escape_md
-# from aioredis.client import Redis
+from aiogram.utils.markdown import quote_html
 from telethon.errors.rpcerrorlist import ApiIdInvalidError, PhoneNumberBannedError, FloodWaitError
-from tortoise.models import Model
 from tortoise import fields, Tortoise
+from tortoise.exceptions import DoesNotExist
+from tortoise.models import Model
 
 
 class Account(Model):
@@ -50,10 +50,10 @@ class Account(Model):
     #     return res
 
     def get_detail_text(self):
-        res = (f'Name: *{escape_md(self.name)}*\n'
-               f'Phone: *{escape_md(self.phone)}*\n\n'
-               f'API id: *{self.api_id}*\n'
-               f'API hash: *{self.api_hash}*')
+        res = (f'Name: <b>{quote_html(self.name)}</b>\n'
+               f'Phone: <b>{quote_html(self.phone)}</b>\n\n'
+               f'API id: <b>{quote_html(self.api_id)}</b>\n'
+               f'API hash: <b>{quote_html(self.api_hash)}</b>')
         # if self.banned_until:
         #     until = self.banned_until.strftime('_%d %b, %y_ *%H:%M*')
         #     res += f'\n\nBanned until: {until}'
@@ -61,6 +61,30 @@ class Account(Model):
 
     def __str__(self):
         return '{} {}'.format(self.name, self.phone)
+
+
+class Settings(Model):
+
+    class Status(enum.IntEnum):
+        ANY_TIME = 0
+        RECENTLY = 1
+        WITHIN_A_WEEK = 7
+        WITHIN_A_MONTH = 30
+
+        @property
+        def verbose_name(self):
+            return self.name.replace('_', ' ').capitalize()
+
+    id = fields.IntField(pk=True)
+    status_filter = fields.IntEnumField(enum_type=Status, default=Status.ANY_TIME)
+    join_delay = fields.IntField(default=60)
+
+    def details_msg(self):
+        msg = ('⚙  Settings\n\n'
+               'Last seen: <b>{}</b>\n'
+               'Delay between adding accounts: <b>{}</b> seconds').format(self.status_filter.verbose_name,
+                                                                          self.join_delay)
+        return msg
 
 
 # class Run(Model):
@@ -92,9 +116,12 @@ async def init_db():
     config = ConfigParser()
     config.read('config.ini')
     await Tortoise.init(
-        # db_url=config.get('Main', 'db_url'),
         db_url='sqlite://db.sqlite3',
         modules={'models': ['tg_scraper.models',]}
     )
     # Generate the schema
     await Tortoise.generate_schemas()
+    try:
+        await Settings.get()
+    except DoesNotExist:
+        await Settings.create()

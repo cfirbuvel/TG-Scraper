@@ -12,6 +12,7 @@ logging.basicConfig(level=logging.INFO)
 
 config = ConfigParser()
 config.read('config.ini')
+config = config['Main']
 
 # redis_host = config.get('Redis', 'host', fallback='localhost')
 # redis_port = config.get('Redis', 'port', fallback='port')
@@ -19,6 +20,6 @@ config.read('config.ini')
 # storage = RedisStorage(host=redis_host, port=redis_port, db=redis_db)
 lock = asyncio.Condition()
 
-bot = Bot(token=config.get('Main', 'bot_token'), parse_mode=ParseMode.HTML)
+bot = Bot(token=config['bot_token'], parse_mode=ParseMode.HTML)
 # TODO: Change to Redis storage
 dp = Dispatcher(bot, storage=MemoryStorage())

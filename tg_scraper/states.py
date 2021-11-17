@@ -2,33 +2,38 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 
 
 class MenuState(StatesGroup):
-    MAIN = State()
+    main = State()
 
 
 class AddAccountState(StatesGroup):
-    PHONE = State()
-    API_ID = State()
-    API_HASH = State()
-    NAME = State()
-
-
-class ScrapeState(StatesGroup):
-    MAIN = State()
-    RUNNING = State()
-
-    ENTER_CODE = State()
-    RESEND_CODE = State()
-
-    GROUP_FROM = State()
-    GROUP_TO = State()
+    phone = State()
+    api_id = State()
+    api_hash = State()
+    name = State()
 
 
 class AccountsState(StatesGroup):
-    LIST = State()
-    DETAIL = State()
-    DELETE = State()
+    list = State()
+    detail = State()
+    delete = State()
 
+
+class SettingsState(StatesGroup):
+    main = State()
+    status_filter = State()
+    join_delay = State()
+
+
+class ScrapeState(StatesGroup):
+    main = State()
+    running = State()
+
+    enter_code = State()
+    resend_code = State()
+
+    group_from = State()
+    group_to = State()
 
 # class SelectGroupState(StatesGroup):
-#     GROUP_FROM = State()
-#     GROUP_TO = State()
+#     group_from = State()
+#     group_to = State()

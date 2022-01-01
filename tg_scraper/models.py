@@ -1,127 +1,72 @@
 import asyncio
-from configparser import ConfigParser
 import datetime
-import enum
+import random
 
 from aiogram.utils.markdown import quote_html
-from telethon.errors.rpcerrorlist import ApiIdInvalidError, PhoneNumberBannedError, FloodWaitError
 from tortoise import fields, Tortoise
-from tortoise.exceptions import DoesNotExist
 from tortoise.models import Model
+
+from .conf import Settings
 
 
 class Account(Model):
-
-    # class Status(enum.IntEnum):
-    #     OK = 0
-    #     INVALID_DETAILS = 1
-    #     PHONE_BANNED = 2
-    #     FLOOD_WAIT = 3
-
     id = fields.IntField(pk=True)
     api_id = fields.IntField()
     api_hash = fields.CharField(max_length=128)
     phone = fields.CharField(max_length=20, unique=True)
     name = fields.CharField(max_length=255)
-    # status = fields.IntEnumField(enum_type=Status, default=Status.OK)
-    # banned_until = fields.DatetimeField(null=True)
     session_string = fields.TextField(null=True)
+    invites_max = fields.IntField(null=True)
+    invites_sent = fields.IntField(default=0)
+    last_invite_date = fields.DatetimeField(null=True)
+    created_at = fields.DatetimeField(auto_now_add=True)
 
-    # async def set_error_status(self, exception):
-    #     status_map = {
-    #         ApiIdInvalidError: self.Status.INVALID_DETAILS,
-    #         PhoneNumberBannedError: self.Status.PHONE_BANNED,
-    #         FloodWaitError: self.Status.FLOOD_WAIT,
-    #     }
-    #     ex_class = type(exception)
-    #     self.status = status_map[ex_class]
-    #     if ex_class == FloodWaitError:
-    #         self.banned_for = exception.seconds
-    #     await self.save()
+    class Meta:
+        ordering = ['-created_at']
 
-    # def get_status_display(self):
-    #     map = {
-    #         self.Status.OK.value: 'Ok', self.Status.INVALID_DETAILS.value: 'Invalid data',
-    #         self.Status.PHONE_BANNED.value: 'Phone number banned', self.Status.FLOOD_WAIT.value: 'Flood wait'
-    #     }
-    #     res = map[self.status]
-    #     if self.status == self.Status.FLOOD_WAIT and self.banned_for is not None:
-    #         res += ' for *{}* seconds'.format(self.banned_for)
-    #     return res
+    async def invites_incr(self, num=1):
+        self.invites_sent += num
+        self.last_invite_date = datetime.datetime.now()
+        await self.save()
 
-    def get_detail_text(self):
-        res = (f'Name: <b>{quote_html(self.name)}</b>\n'
-               f'Phone: <b>{quote_html(self.phone)}</b>\n\n'
-               f'API id: <b>{quote_html(self.api_id)}</b>\n'
-               f'API hash: <b>{quote_html(self.api_hash)}</b>')
-        # if self.banned_until:
-        #     until = self.banned_until.strftime('_%d %b, %y_ *%H:%M*')
-        #     res += f'\n\nBanned until: {until}'
-        return res
+    @property
+    def can_invite(self):
+        return self.invites_sent < self.invites_max
 
-    def __str__(self):
-        return '{} {}'.format(self.name, self.phone)
+    @property
+    def invites_left(self):
+        return self.invites_max - self.invites_sent
 
+    async def refresh_invites(self):
+        limit_reset = Settings().limit_reset
+        if not self.can_invite:
+            if self.last_invite_date + datetime.timedelta(days=limit_reset) >= datetime.datetime.now():
+                self.invites_sent = 0
+                await self.save()
 
-class Settings(Model):
+    @property
+    def safe_name(self):
+        return quote_html(self.name)
 
-    class Status(enum.IntEnum):
-        ANY_TIME = 0
-        RECENTLY = 1
-        WITHIN_A_WEEK = 7
-        WITHIN_A_MONTH = 30
-
-        @property
-        def verbose_name(self):
-            return self.name.replace('_', ' ').capitalize()
-
-    id = fields.IntField(pk=True)
-    status_filter = fields.IntEnumField(enum_type=Status, default=Status.ANY_TIME)
-    join_delay = fields.IntField(default=60)
-
-    def details_msg(self):
-        msg = ('⚙  Settings\n\n'
-               'Last seen: <b>{}</b>\n'
-               'Delay between adding accounts: <b>{}</b> seconds').format(self.status_filter.verbose_name,
-                                                                          self.join_delay)
+    def get_detail_msg(self):
+        msg = (f'Name: <b>{self.safe_name}</b>\n'
+               f'Phone: <b>{self.phone}</b>\n'
+               f'API id: <b>{self.api_id}</b>\n'
+               f'API hash: <b>{self.api_hash}</b>\n\n'
+               f'Invites limit: <b>{self.invites_max}</b>\n'
+               f'Invites sent: <b>{self.invites_sent}</b>')
+        if not self.can_invite:
+            reset_at = self.last_invite_date + datetime.timedelta(days=Settings().limit_reset)
+            msg += '\nInvites reset at: <b>{}</b>'.format(reset_at.strftime('%d-%m-%Y %H:%M'))
         return msg
 
-
-# class Run(Model):
-#     id = fields.IntField(pk=True)
-#     chat_id = fields.IntField(unique=True)
-#     task_name = fields.CharField(max_length=68)
-#     last_time = fields.DatetimeField(null=True)
-#     # accounts = fields.ManyToManyField('models.Account', related_name='runs')
-#
-#     def update_time(self):
-#         self.last_time = datetime.datetime.now()
-#         self.save()
-#
-#     async def is_active(self):
-#         return any(task.get_name() == self.task_name for task in asyncio.all_tasks())
-
-
-# class Participant(Model):
-#     id = fields.IntField(pk=True)
-#     user_id = fields.IntField()
-#     added = fields.BooleanField(default=False)
-#     run = fields.ForeignKeyField('models.Run', related_name='participants', on_delete=fields.CASCADE)
+    # def __str__(self):
+    #     return '{} {}'.format(self.name, self.phone)
 
 
 async def init_db():
-    # Here we create a SQLite DB using file "db.sqlite3"
-    #  also specify the app name of "models"
-    #  which contain models from "app.models"
-    config = ConfigParser()
-    config.read('config.ini')
     await Tortoise.init(
         db_url='sqlite://db.sqlite3',
-        modules={'models': ['tg_scraper.models',]}
+        modules={'models': ['tg_scraper.models']}
     )
-    # Generate the schema
     await Tortoise.generate_schemas()
-    try:
-        await Settings.get()
-    except DoesNotExist:
-        await Settings.create()

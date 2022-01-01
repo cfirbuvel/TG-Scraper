@@ -1,18 +1,18 @@
 from aiogram.dispatcher.filters.state import State, StatesGroup
 
 
-class MenuState(StatesGroup):
+class Menu(StatesGroup):
     main = State()
 
 
-class AddAccountState(StatesGroup):
+class AddAccount(StatesGroup):
     phone = State()
     api_id = State()
     api_hash = State()
     name = State()
 
 
-class AccountsState(StatesGroup):
+class Accounts(StatesGroup):
     list = State()
     detail = State()
     delete = State()
@@ -20,13 +20,17 @@ class AccountsState(StatesGroup):
 
 class SettingsState(StatesGroup):
     main = State()
-    status_filter = State()
+    run = State()
+    invites_limit = State()
+    limit_reset = State()
+    last_seen_filter = State()
     join_delay = State()
+    add_sessions = State()
 
 
-class ScrapeState(StatesGroup):
+class Scrape(StatesGroup):
     main = State()
-    running = State()
+    task_running = State()
 
     enter_code = State()
     resend_code = State()
@@ -34,6 +38,3 @@ class ScrapeState(StatesGroup):
     group_from = State()
     group_to = State()
 
-# class SelectGroupState(StatesGroup):
-#     group_from = State()
-#     group_to = State()

@@ -1,43 +1,23 @@
 import asyncio
-import itertools
 import logging
 import re
 
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
-from aiogram.dispatcher.filters import Filter, StateFilter
-from aiogram.types import CallbackQuery
-from telethon import TelegramClient
+import aiosqlite
+from aiogram.utils.markdown import quote_html
 from telethon.sessions.string import StringSession
-from tortoise import run_async
+from telethon.crypto import AuthKey
+
 
 logger = logging.getLogger(__name__)
-
-
-class QueryDataFilter(Filter):
-
-    def __init__(self, *args):
-        self.data = list(args)
-
-    async def check(self, callback_query):
-        return callback_query.data in self.data
-
-
-# class TaskRunning(Filter):
-#
-#     async def check(self, obj):
-#         if type(obj) == CallbackQuery:
-#             obj = obj.message
-#         task_name = str(obj.chat.id)
-#         return any(task.get_name() == task_name for task in asyncio.all_tasks())
 
 
 def sign_msg(text, sign='💥'):
     return sign + ' ' + text
 
 
-def tg_error_msg(exception):
+def exc_to_msg(exception):
     msg = re.sub(r'\(caused by \w+\)\s*$', '', str(exception))
-    return msg
+    return quote_html(msg)
 
 
 def task_running(chat_id):
@@ -45,26 +25,19 @@ def task_running(chat_id):
     return any(task.get_name() == name for task in asyncio.all_tasks())
 
 
-class TgClient(TelegramClient):
-
-    def __init__(self, account, *args, **kwargs):
-        self.account = account
-        session = StringSession(string=account.session_string)
-        # session = AccountSession(account)
-        super().__init__(session, account.api_id, account.api_hash, *args, **kwargs)
-
-    async def save_session(self):
-        session_string = self.session.save()
-        self.account.session_string = session_string
-        await self.account.save()
-
-    async def __aenter__(self):
-        await self.connect()
-        return self
-
-    async def __aexit__(self, *args):
-        await self.save_session()
-        await self.disconnect()
+async def session_db_to_string(path):
+    async with aiosqlite.connect(path) as db:
+        try:
+            c = await db.execute('select * from sessions')
+        except aiosqlite.OperationalError:
+            return
+        row = await c.fetchone()
+        await c.close()
+        if row:
+            obj = StringSession()
+            obj._dc_id, obj._server_address, obj._port, key, obj._takeout_id = row
+            obj._auth_key = AuthKey(data=key)
+            return obj.save()
 
 
 class Queue(asyncio.Queue):

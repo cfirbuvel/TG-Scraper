@@ -1,31 +1,36 @@
 import asyncio
+from contextlib import AsyncExitStack
 import datetime
 import logging
 from collections import OrderedDict
 import random
 
 from aiogram.bot.bot import Bot
-from aiogram.utils.markdown import html_decoration as md
+from aiogram.utils.markdown import quote_html
+import aioitertools
 from faker import Faker
+import more_itertools
 from telethon.errors.rpcerrorlist import (UserAlreadyParticipantError, UserPrivacyRestrictedError, UserBlockedError,
                                           UserNotMutualContactError, InputUserDeactivatedError, UserKickedError,
                                           UserChannelsTooMuchError, UserDeactivatedBanError, UserBannedInChannelError,
                                           FloodWaitError, PeerFloodError, ChatWriteForbiddenError, ChannelPrivateError,
                                           ChatAdminRequiredError, ApiIdInvalidError, PhoneNumberBannedError,
-                                          PhoneCodeInvalidError, PhoneCodeExpiredError)
+                                          PhoneNumberUnoccupiedError, PhoneCodeInvalidError, PhoneCodeExpiredError)
 from telethon.tl.functions.account import UpdateProfileRequest
 from telethon.tl.functions.channels import InviteToChannelRequest, GetParticipantsRequest
 from telethon.tl.functions.contacts import ImportContactsRequest
 from telethon.tl.functions.messages import AddChatUserRequest
 from telethon.tl.functions.users import GetFullUserRequest
-from telethon.tl.types import InputPhoneContact, ChannelParticipantsRecent, User
+from telethon.tl.types import InputPhoneContact, ChannelParticipantsRecent, TypeUser
 from telethon.tl.types.auth import SentCode
 
-from tg_scraper import Answer
-from tg_scraper.inline_keyboards import InlineKeyboard as Keyboard
-from tg_scraper.models import Account, Settings
-from tg_scraper.states import MenuState, AddAccountState, ScrapeState
-from tg_scraper.utils import TgClient, tg_error_msg, sign_msg
+from . import keyboards
+from .bot import dispatcher
+from .conf import Settings
+from .models import Account
+from .states import Menu, Scrape
+from .tg import TgClient, NotAuthenticatedError
+from .utils import exc_to_msg, sign_msg
 
 
 logger = logging.getLogger(__name__)
@@ -35,9 +40,9 @@ def user_active(user):
     return not any([user.bot, user.deleted, user.scam, user.fake])
 
 
-def user_status_valid(user, filter_value=0):
+def user_status_valid(user, filter):
     status = user.status
-    if filter_value:
+    if filter:
         if not status:
             return False
         days_map = {
@@ -57,13 +62,17 @@ def user_status_valid(user, filter_value=0):
                 days_passed = days_map[name]
             except KeyError:
                 return False
-        return days_passed <= filter_value
+        return days_passed <= filter
     return True
 
 
 async def add_to_group(client, group, user_id):
-    if group.is_channel:
-        await client(InviteToChannelRequest(channel=group.id, users=[user_id]))
+    # group_id, is_channel = group_data
+    # print(group_id)
+    # print(is_channel)
+    is_channel = getattr(group, 'gigagroup', False) or getattr(group, 'megagroup', False)
+    if is_channel:
+        await client(InviteToChannelRequest(channel=group, users=[user_id]))
     else:
         try:
             await client(AddChatUserRequest(chat_id=group.id, user_id=user_id, fwd_limit=50))
@@ -94,178 +103,207 @@ def get_user_name(user, fallback='Guest'):
     return first_name, last_name
 
 
-async def init_accounts(chat_id, bot, queue):
-    result = []
+async def update_name(client):
     fake = Faker()
-    for acc in await Account.all():
-        async with TgClient(acc) as client:
-            msg = '<i>Initializing account: <b>{}</b>.</i>'.format(md.quote(str(acc)))
-            await bot.send_message(chat_id, sign_msg(msg))
-            user = None
-            if await client.is_user_authorized():
-                user = await client.get_me()
+    first_name = fake.first_name()
+    last_name = fake.last_name()
+    await client(UpdateProfileRequest(first_name=first_name, last_name=last_name))
+
+
+async def sign_in(client, chat_id, queue):
+    # if await client.is_user_authorized():
+    #     await update_name(client)
+    #     return await client.get_me()
+    # if not skip_sign_in:
+    bot = dispatcher.bot
+    acc = client.account
+    await bot.send_message(chat_id, 'Signing in <b>{}</b>'.format(acc.safe_name))
+    code = None
+    while True:
+        try:
+            if code:
+                await client.sign_in(acc.phone, code)
+                # await update_name(client)
+                return True
             else:
-                code = None
-                phone_code_hash = None
-                while True:
-                    try:
-                        res = await client.sign_in(acc.phone, code, phone_code_hash=phone_code_hash)
-                        if type(res) == SentCode:
-                            phone_code_hash = res.phone_code_hash
-                            msg = ('Enter the code for: <b>{}</b>\n'
-                                   'Please divide it with whitespaces, like: <b>41 9 78</b>').format(md.quote(str(acc)))
-                    except (ApiIdInvalidError, PhoneNumberBannedError, FloodWaitError) as ex:
-                        msg = '<i>{}</i>'.format(md.quote(tg_error_msg(ex)))
-                        if type(ex) in (ApiIdInvalidError, PhoneNumberBannedError):
-                            msg += '\n<i>Deleted account.</i>'
-                            await acc.delete()
-                        await bot.send_message(chat_id, sign_msg(msg), disable_web_page_preview=True)
-                        break
-                    except (PhoneCodeInvalidError, PhoneCodeExpiredError) as ex:
-                        msg = '<i><b>{}</b></i>'.format(md.quote(tg_error_msg(ex)))
-                    if type(res) == User:
-                        user = res
-                        break
-                    await ScrapeState.enter_code.set()
-                    await bot.send_message(chat_id, sign_msg(msg), reply_markup=Keyboard.enter_code)
-                    answer = await queue.get()
-                    queue.task_done()
-                    if answer == Answer.SKIP:
-                        break
-                    elif answer == Answer.CODE:
-                        code = await queue.get()
-                        queue.task_done()
-                    else:
-                        code = None
-                    print('Resending')
-
-            if user:
-                first_name = fake.first_name()
-                last_name = fake.last_name()
-                await client(UpdateProfileRequest(first_name=first_name, last_name=last_name))
-                result.append(acc)
-    return result
+                await client.send_code_request(acc.phone)
+        except (ApiIdInvalidError, PhoneNumberBannedError, FloodWaitError, PhoneNumberUnoccupiedError) as e:
+            await bot.send_message(chat_id, exc_to_msg(e), disable_web_page_preview=True)
+            if type(e) in (ApiIdInvalidError, PhoneNumberBannedError):
+                await acc.delete()
+                await bot.send_message(chat_id, 'Account has been deleted.')
+            return
+        except (PhoneCodeInvalidError, PhoneCodeExpiredError) as e:
+            msg = ('{}\n'
+                   'You can reenter code.\n'
+                   '<i>Keep in mind that after several attempts Telegram might'
+                   ' temporarily block account from signing in .</i>').format(exc_to_msg(e))
+        else:
+            msg = ('Code was sent to <b>{}</b>\n'
+                   'Please divide it with whitespaces, like: <i>41 9 78</i>').format(acc.safe_name)
+        await Scrape.enter_code.set()
+        await bot.send_message(chat_id, msg, reply_markup=keyboards.code_request())
+        answer = await queue.get()
+        queue.task_done()
+        if answer == 'resend':
+            code = None
+        elif answer == 'skip':
+            return
+        else:
+            code = answer
 
 
-async def main_process(chat_id, bot, queue, accounts):
-    settings = await Settings.get()
-    root_acc = accounts[0]
-    async with TgClient(root_acc) as root_client:
-        root_user = await root_client.get_me()
+async def main_process(chat_id, queue):
+    bot = dispatcher.bot
+    await bot.send_message(chat_id, 'Task started. You can stop it at any moment with /stop command.')
+    settings = Settings()
+    skip_sign_in = settings.skip_sign_in
+    accounts = []
+    await bot.send_message(chat_id, 'Initializing accounts.')
+    for acc in await Account.all():
+        await acc.refresh_invites()
+        if acc.can_invite:
+            async with TgClient(acc) as client:
+                if not await client.is_user_authorized():
+                    if skip_sign_in or not await sign_in(client, chat_id, queue):
+                        continue
+                await update_name(client)
+            accounts.append(acc)
+    if len(accounts) < 2:
+        await bot.send_message('No accounts ready. Stopping.')
+        return
+    invites_total = sum(acc.invites_left for acc in accounts)
+    msg = 'Average number of invites can be sent in next {} days: {}'.format(settings.limit_reset, invites_total)
+    await bot.send_message(chat_id, msg)
+    # all_accounts = more_itertools.seekable(await Account.all())
+    prev_acc = accounts[0]
+    added_participants = set()
+    async with TgClient(prev_acc) as client:
         groups = {}
         group_names = OrderedDict()
-        async for dialog in root_client.iter_dialogs():
+        async for dialog in client.iter_dialogs():
             if dialog.is_group:
+                # print(dir(dialog))
                 group_id = str(dialog.id)
-                groups[group_id] = dialog
+                groups[group_id] = dialog.is_channel
                 group_names[group_id] = dialog.title
         queue.put_nowait(group_names)
-        await ScrapeState.group_from.set()
-        msg = '<b>Choose a group to scrape users from</b>'
-        await bot.send_message(chat_id, sign_msg(msg), reply_markup=Keyboard.groups(group_names))
+        await Scrape.group_from.set()
+        reply_markup = keyboards.groups_list(list(group_names.items()))
+        await bot.send_message(chat_id, '<b>Choose a group to scrape users from</b>', reply_markup=reply_markup)
         await queue.join()
         from_id, to_id = await queue.get()
         queue.task_done()
-        from_group = groups[from_id]
-        to_group = groups[to_id]
-        msg = '<i><b>Running main actions.</b></i>'
-        await bot.send_message(chat_id, sign_msg(msg), reply_markup=Keyboard.run_control)
-        added_participants = set()
+        # from_group = (int(from_id), groups[from_id])
+        # to_group = (int(to_id), groups[to_id])
+        from_id = int(from_id)
+        to_id = int(to_id)
         counter = 1
-        async for user in root_client.iter_participants(to_group, aggressive=True):
+        async for user in client.iter_participants(to_id, aggressive=True):
             counter += 1
             if user_active(user):
                 added_participants.add(user.id)
-            if counter % 10000 == 0:
-                await asyncio.sleep(5)
-        status_filter = settings.status_filter
-        join_delay = settings.join_delay
-        for acc in accounts[1:]:
-            async with TgClient(acc) as client:
-                user = await client.get_me()
-                first_name, last_name = get_user_name(user, acc.name)
-                phone_contact = InputPhoneContact(client_id=user.id, phone=acc.phone,
-                                                  first_name=first_name, last_name=last_name)
-                await root_client(ImportContactsRequest([phone_contact]))
-                first_name, last_name = get_user_name(root_user, root_acc.name)
-                phone_contact = InputPhoneContact(client_id=root_user.id, phone=root_user.phone,
-                                                  first_name=first_name, last_name=last_name)
+            print(counter)
+            if counter % 5000 == 0:
+                await asyncio.sleep(10)
+    # loading_task =
+    await bot.send_message(chat_id, '<i><b>Running main actions</b></i>')
+    join_delay = settings.join_delay
+    last_seen_filter = settings.last_seen_filter
+    for acc in accounts[1:]:
+        async with TgClient(acc) as client:
+            print(acc.name)
+            user = await client.get_me()
+            # from_entity = await client.get_entity(from_group[0])
+            # to_entity = await client.get()
+            async with TgClient(prev_acc) as prev_client:
+                prev_user = await prev_client.get_me()
+                phone_contact = InputPhoneContact(client_id=user.id, phone=user.phone,
+                                                  first_name=user.first_name, last_name=user.last_name)
+                await prev_client(ImportContactsRequest([phone_contact]))
+                phone_contact = InputPhoneContact(client_id=prev_user.id, phone=prev_user.phone,
+                                                  first_name=prev_user.first_name, last_name=prev_user.last_name)
                 await client(ImportContactsRequest([phone_contact]))
-                # input_user = await main_client.get_input_entity(user.id)
-
-                # msg = '<i>Adding <b>{}</b> account to source and target groups.</i>'.format(md.quote(str(acc)))
-                # await bot.send_message(chat_id, sign_msg(msg))
-                await asyncio.sleep(join_delay + random.randint(-10, 10))
+                from_group = await prev_client.get_entity(from_id)
+                to_group = await prev_client.get_entity(to_id)
                 try:
-                    await add_to_group(root_client, from_group, user.id)
-                    await add_to_group(root_client, to_group, user.id)
+                    await add_to_group(prev_client, from_group, user.id)
+                    await add_to_group(prev_client, to_group, user.id)
+                    await prev_acc.invites_incr(num=2)
                 except (UserKickedError, UserDeactivatedBanError, UserBannedInChannelError,
-                        UserChannelsTooMuchError, InputUserDeactivatedError, UserBlockedError) as ex:
-                    # msg = tg_error_msg(ex) + '\nSkipping.'
-                    # await bot.send_message(chat_id, msg)
-                    logger.info(str(ex))
+                        UserChannelsTooMuchError, InputUserDeactivatedError, UserBlockedError) as e:
+                    logger.info(str(e))
                     logger.info('Skipping client.')
                     continue
-                except (ChatWriteForbiddenError, ChannelPrivateError, ChatAdminRequiredError) as ex:
-                    msg = tg_error_msg(ex) + '\nAborting run.'
-                    await bot.send_message(chat_id, sign_msg(msg))
+                except (ChatWriteForbiddenError, ChannelPrivateError, ChatAdminRequiredError) as e:
+                    msg = exc_to_msg(e) + '\nAborting run.'
+                    await bot.send_message(chat_id, msg)
                     return
-                count = 0
-                # async for user in get_participants(client, from_group):
-                from_group_entity = await client.get_entity(from_group.id)
-                users_counter = 0
-                async for user in client.iter_participants(from_group_entity, aggressive=True):
-                    users_counter += 1
-                    if users_counter % 10000 == 0:
-                        await asyncio.sleep(5)
-                    user_id = user.id
-                    if user_active(user) and user_id not in added_participants and user_status_valid(user, status_filter):
-                        name = '{} {}'.format(user.first_name, user.last_name)
-                        # input_user = await client.get_input_entity(user_id)
-                        try:
-                            await add_to_group(client, to_group, user_id)
-                        except (UserPrivacyRestrictedError, UserNotMutualContactError, InputUserDeactivatedError,
-                                UserChannelsTooMuchError, UserBlockedError, UserKickedError, UserBannedInChannelError,) as ex:
-                            # msg = tg_error_msg(ex) + '\nSkipping user.'
-                            # await bot.send_message(chat_id, sign_msg(msg))
-                            logger.info(str(ex))
-                            logger.info('Skipping user.')
-                            continue
-                        except (PeerFloodError, FloodWaitError, UserDeactivatedBanError) as ex:
-                            # msg = tg_error_msg(ex) + '\nSkipping client.'
-                            # await bot.send_message(chat_id, sign_msg(msg))
-                            logger.info(str(ex))
-                            logger.info('Skipping client.')
-                            break
-                        except (ChatWriteForbiddenError, ChannelPrivateError, ChatAdminRequiredError) as ex:
-                            msg = tg_error_msg(ex) + '\nAborting run.'
-                            await bot.send_message(chat_id, sign_msg(msg))
-                            return
-                        logger.info('Added user %s', name)
-                        added_participants.add(user_id)
-                        count += 1
-                        await asyncio.sleep(2)
-                        if count >= 50:
-                            break
+            # from_group_entity = await client.get_entity(from_group.id)
+            invites_left = acc.invites_left
+            counter = 0
+            blocked = False
+            from_group = await client.get_entity(from_id)
+            to_group = await client.get_entity(to_id)
+            async for user in client.iter_participants(from_group, aggressive=True):
+                print(invites_left)
+                if invites_left <= 2:
+                    break
+                counter += 1
+                if counter % 5000 == 0:
+                    await asyncio.sleep(10)
+                user_id = user.id
+                # print(user_active(user))
+                # print(user_id not in added_participants)
+                # pr
+                if user_active(user) and user_id not in added_participants and user_status_valid(user, last_seen_filter):
+                    name = '{} {}'.format(user.first_name, user.last_name)
+                    try:
+                        await add_to_group(client, to_group, user_id)
+                    except (UserPrivacyRestrictedError, UserNotMutualContactError, InputUserDeactivatedError,
+                            UserChannelsTooMuchError, UserBlockedError, UserKickedError,
+                            UserBannedInChannelError,) as e:
+                        # msg = tg_error_msg(ex) + '\nSkipping user.'
+                        # await bot.send_message(chat_id, sign_msg(msg))
+                        logger.info(str(e))
+                        logger.info('Skipping user.')
+                        continue
+                    except (PeerFloodError, FloodWaitError, UserDeactivatedBanError) as e:
+                        # msg = tg_error_msg(ex) + '\nSkipping client.'
+                        # await bot.send_message(chat_id, sign_msg(msg))
+                        logger.info(str(e))
+                        logger.info('Skipping client.')
+                        blocked = True
+                        break
+                    except (ChatWriteForbiddenError, ChannelPrivateError, ChatAdminRequiredError) as e:
+                        msg = exc_to_msg(e) + '\nAborting run.'
+                        await bot.send_message(chat_id, sign_msg(msg))
+                        return
+                    logger.info('Added user %s', name)
+                    added_participants.add(user_id)
+                    invites_left -= 1
+                    await acc.invites_incr()
+                    await asyncio.sleep(2)
+        prev_acc = acc
+        # if not blocked:
+        #     prev_acc = acc
+        # else:
+        #     prev_acc = accounts[0]
+        await asyncio.sleep(join_delay)
     return accounts
 
 
-async def scrape_task(chat_id, bot: Bot, queue: asyncio.Queue):
+async def scrape(chat_id, queue: asyncio.Queue):
+    bot = dispatcher.bot
     try:
-        accounts = await init_accounts(chat_id, bot, queue)
-        if not accounts:
-            msg = '<i><b>No accounts were logged in. Run aborted.</b></i>'
-        else:
-            await main_process(chat_id, bot, queue, accounts)
-            msg = '<i><b>Run completed.</b></i>'
+        await main_process(chat_id, queue)
     except asyncio.CancelledError:
-        msg = '<i><b>Run stopped.</b></i>'
-    await bot.send_message(chat_id, sign_msg(msg))
-    await MenuState.main.set()
-    await bot.send_message(chat_id, 'Menu', reply_markup=Keyboard.main_menu)
+        await bot.send_message(chat_id, 'Run stopped.')
+    await Menu.main.set()
+    await bot.send_message(chat_id, 'Menu', reply_markup=keyboards.main_menu())
 
 
-async def scrape_task_repeated(chat_id, bot: Bot, queue, interval=86400, *args, **kwargs):
+async def scrape_repeatedly(chat_id, bot: Bot, queue, interval=86400, *args, **kwargs):
     accounts = await init_accounts(chat_id, bot, queue)
     if not accounts:
         msg = '<i><b>No accounts were logged in. Run aborted.</b></i>'
@@ -285,5 +323,14 @@ async def scrape_task_repeated(chat_id, bot: Bot, queue, interval=86400, *args, 
                     await asyncio.sleep(interval)
                     continue
             break
-    await MenuState.main.set()
+    await Menu.main.set()
     await bot.send_message(chat_id, 'Menu', reply_markup=Keyboard.main_menu)
+
+
+async def show_loading(message):
+    text = message.text
+    symbols = '❤💔💙🔥'
+    async for sym in aioitertools.cycle(symbols):
+        msg = '{} {}'.format(text, sym)
+        message = await message.edit_text(msg)
+        await asyncio.sleep(0.5)

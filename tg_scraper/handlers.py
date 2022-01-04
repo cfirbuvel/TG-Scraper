@@ -196,6 +196,18 @@ async def account_delete_no(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+@dispatcher.callback_query_handler(CallbackData('set_main'), state=Accounts.detail)
+async def on_account_set_main(callback: CallbackQuery, state: FSMContext):
+    user_data = await state.get_data()
+    acc = await Account.get(id=user_data['acc_id'])
+    if not acc.master:
+        await Account.filter(master=True).update(master=False)
+        acc.master = True
+        await acc.save()
+        await callback.message.edit_text(acc.get_detail_msg(), reply_markup=keyboards.account_detail())
+    await callback.answer()
+
+
 @dispatcher.callback_query_handler(CallbackData('back'), state=Accounts.detail)
 async def account_detail_back(callback: CallbackQuery, state: FSMContext):
     await Accounts.list.set()
@@ -365,6 +377,7 @@ async def add_sessions_upload(message: Message, state: FSMContext):
     invites_limit = settings.invites_limit
     for data in sessions.values():
         if len(data) == 5:
+            data['auto_created'] = True
             try:
                 await Account.get(**data)
             except DoesNotExist:
@@ -408,18 +421,30 @@ async def run_scrape(callback: CallbackQuery, state: FSMContext):
     await callback.answer(answer)
 
 
-@dispatcher.callback_query_handler(CallbackData('stop_run'), state='*')
-async def stop_run(callback: CallbackQuery, state: FSMContext):
-    message = callback.message
+# @dispatcher.callback_query_handler(CallbackData('stop_run'), state='*')
+# async def stop_run(callback: CallbackQuery, state: FSMContext):
+#     message = callback.message
+#     for task in asyncio.all_tasks():
+#         if task.get_name() == str(message.chat.id):
+#             await message.delete()
+#             await callback.answer('Stopping run.')
+#             task.cancel()
+#             await state.reset_state()
+#             return
+#     await message.edit_text('<b>There is no active run at the moment.</b>', reply_markup=None)
+#     await callback.answer()
+#     await to_main_menu(message)
+
+
+@dispatcher.message_handler(commands=['stop'], state='*')
+async def on_stop(message: Message, state: FSMContext):
     for task in asyncio.all_tasks():
         if task.get_name() == str(message.chat.id):
-            await state.reset_state()
-            await message.delete()
-            await callback.answer('Stopping run.')
+            await message.answer('Stopping run.')
             task.cancel()
+            await state.reset_state()
             return
-    await message.edit_text('<b>There is no active run at the moment.</b>', reply_markup=None)
-    await callback.answer()
+    await message.answer('There is no active task at the moment.')
     await to_main_menu(message)
 
 
@@ -482,15 +507,15 @@ async def select_group_to(callback: CallbackQuery, state: FSMContext):
     #     await callback.answer('Run has finished or stopped.')
 
 
-@dispatcher.callback_query_handler(CallbackData('prev', 'blank', 'next'), state=(Scrape.group_from, Scrape.group_to))
+@dispatcher.callback_query_handler(Regexp(r'^page_\d+$'), state=(Scrape.group_from, Scrape.group_to))
 async def select_group_page(callback: CallbackQuery, state: FSMContext):
-    action = callback.data
-    if action in ('prev', 'next'):
-        async with state.proxy() as user_data:
-            try:
-                page = user_data['list_page']
-            except KeyError:
-                page = 1
+    page = int(callback.data.split('_')[1])
+    async with state.proxy() as user_data:
+        try:
+            old_page = user_data['list_page']
+        except KeyError:
+            old_page = 1
+        if page != old_page:
             if 'groups' not in user_data:
                 queue = user_data['queue']
                 groups = queue.get_nowait()
@@ -498,9 +523,9 @@ async def select_group_page(callback: CallbackQuery, state: FSMContext):
                 user_data['groups'] = groups
             else:
                 groups = user_data['groups']
-            page, reply_markup = Keyboard.groups(groups, page, action)
             user_data['list_page'] = page
-        await callback.message.edit_reply_markup(reply_markup=reply_markup)
+            reply_markup = keyboards.groups_list(groups, page)
+            await callback.message.edit_reply_markup(reply_markup=reply_markup)
     await callback.answer()
 
 

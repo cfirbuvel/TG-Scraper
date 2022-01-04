@@ -19,10 +19,12 @@ class Account(Model):
     invites_max = fields.IntField(null=True)
     invites_sent = fields.IntField(default=0)
     last_invite_date = fields.DatetimeField(null=True)
+    master = fields.BooleanField(default=False)
+    auto_created = fields.BooleanField(default=False)
     created_at = fields.DatetimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ['-created_at']
+        ordering = ['-master', '-created_at']
 
     async def invites_incr(self, num=1):
         self.invites_sent += num
@@ -58,10 +60,11 @@ class Account(Model):
         if not self.can_invite:
             reset_at = self.last_invite_date + datetime.timedelta(days=Settings().limit_reset)
             msg += '\nInvites reset at: <b>{}</b>'.format(reset_at.strftime('%d-%m-%Y %H:%M'))
+        if self.auto_created:
+            msg += '\n<i>Account was created automatically.</i>'
+        if self.master:
+            msg = '🎩 Main account\n' + msg
         return msg
-
-    # def __str__(self):
-    #     return '{} {}'.format(self.name, self.phone)
 
 
 async def init_db():

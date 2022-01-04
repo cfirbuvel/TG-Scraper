@@ -101,6 +101,7 @@ def accounts_list(items, page=1):
 def account_detail():
     return [
         [{'text': '🚫 Delete', 'callback_data': 'delete'}],
+        [{'text': '🎩 Set as main', 'callback_data': 'set_main'}],
         [{'text': '↩ Back', 'callback_data': 'back'}]
     ]
 
@@ -158,15 +159,15 @@ def task_already_running():
     ]
 
 
-@inline_markup
-def stop_run():
-    return [
-        [{'text': '☠️Stop Run', 'callback_data': 'stop_run'}],
-    ]
+# @inline_markup
+# def stop_run():
+#     return [
+#         [{'text': '☠️Stop Run', 'callback_data': 'stop_run'}],
+#     ]
 
 
 @inline_markup
 def groups_list(items, page=1):
     rows = general_list(items, page)
-    rows.append([{'text': '☠️Stop Run', 'callback_data': 'stop_run'}])
+    # rows.append([{'text': '☠️Stop Run', 'callback_data': 'stop_run'}])
     return rows

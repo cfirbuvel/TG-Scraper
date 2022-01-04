@@ -123,7 +123,7 @@ async def sign_in(client, chat_id, queue):
                 # await update_name(client)
                 return True
             else:
-                await client.send_code_request(acc.phone)
+                await client.send_code_request(acc.phone, force_sms=True)
         except (ApiIdInvalidError, PhoneNumberBannedError, FloodWaitError, PhoneNumberUnoccupiedError) as e:
             await bot.send_message(chat_id, exc_to_msg(e), disable_web_page_preview=True)
             if type(e) in (ApiIdInvalidError, PhoneNumberBannedError):

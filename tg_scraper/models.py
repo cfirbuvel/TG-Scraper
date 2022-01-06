@@ -42,7 +42,8 @@ class Account(Model):
     async def refresh_invites(self):
         limit_reset = Settings().limit_reset
         if not self.can_invite:
-            if self.last_invite_date + datetime.timedelta(days=limit_reset) >= datetime.datetime.now():
+            last_invite_date = self.last_invite_date.replace(tzinfo=None)
+            if last_invite_date + datetime.timedelta(days=limit_reset) >= datetime.datetime.now():
                 self.invites_sent = 0
                 await self.save()
 

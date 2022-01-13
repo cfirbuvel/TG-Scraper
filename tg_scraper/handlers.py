@@ -1,4 +1,5 @@
 import asyncio
+import functools
 from collections import defaultdict
 import io
 import json
@@ -29,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 async def to_main_menu(message, callback_query=None, callback_answer=None, edit=False):
     await Menu.main.set()
-    params = {'text': 'Menu', 'reply_markup': keyboards.main_menu()}
+    params = {'text': 'Main', 'reply_markup': keyboards.main_menu()}
     if edit:
         await message.edit_text(**params)
     else:
@@ -438,14 +439,17 @@ async def run_scrape(callback: CallbackQuery, state: FSMContext):
 
 @dispatcher.message_handler(commands=['stop'], state='*')
 async def on_stop(message: Message, state: FSMContext):
+    stopped = False
     for task in asyncio.all_tasks():
         if task.get_name() == str(message.chat.id):
-            await message.answer('Stopping run.')
             task.cancel()
-            await state.reset_state()
-            return
-    await message.answer('There is no active task at the moment.')
-    await to_main_menu(message)
+            stopped = True
+    if stopped:
+        await message.answer('Stopping run.')
+        await state.reset_state()
+    else:
+        await message.answer('There is no active task at the moment.')
+        await to_main_menu(message)
 
 
 @dispatcher.message_handler(Regexp(r'^[A-Za-z0-9_ ]+$'), state=Scrape.enter_code)
@@ -463,51 +467,28 @@ async def on_code_request(update, state: FSMContext):
     await queue.join()
 
 
-@dispatcher.callback_query_handler(Regexp(r'[0-9]+'), state=Scrape.group_from)
-async def select_group_from(callback: CallbackQuery, state: FSMContext):
-    # message = callback.message
-    # TODO: Reset state when task stopped
-    # if task_running(message.chat.id):
-    key = callback.data
+@dispatcher.callback_query_handler(Regexp(r'\d+'), state=Scrape.select_group)
+async def select_group(callback: CallbackQuery, state: FSMContext):
+    await state.reset_state(with_data=False)
+    val = callback.data
+    await callback.message.delete()
+    # queue = (await state.get_data())['queue']
     async with state.proxy() as user_data:
-        if 'groups' not in user_data:
-            queue = user_data['queue']
-            groups = queue.get_nowait()
+        queue = user_data['queue']
+        try:
+            del user_data['groups']
+            del user_data['list_page']
+        except KeyError:
+            queue.get_nowait()
             queue.task_done()
-            user_data['groups'] = groups
-        else:
-            groups = user_data['groups']
-        user_data['group_from'] = key
-        user_data['list_page'] = 1
-        del groups[key]
-    await Scrape.group_to.set()
-    reply_markup = keyboards.groups_list(list(groups.items()))
-    await callback.message.edit_text('<b>Choose a group to add users to</b>', reply_markup=reply_markup)
+    queue.put_nowait(val)
     await callback.answer()
-    # else:
-    #     await state.reset_state()
-    #     await message.delete()
-    #     await callback.answer('Run has finished or stopped.')
+    await queue.join()
 
 # TODO: Add handler for groups pagination
 
 
-@dispatcher.callback_query_handler(Regexp(r'[0-9]+'), state=Scrape.group_to)
-async def select_group_to(callback: CallbackQuery, state: FSMContext):
-    await state.reset_state(with_data=False)
-    await callback.message.delete()
-    # if task_running(message.chat.id):
-    user_data = await state.get_data()
-    queue = user_data['queue']
-    # await Scrape.running.set()
-    queue.put_nowait((user_data['group_from'], callback.data))
-    await callback.answer()
-    # else:
-    #     await state.reset_state()
-    #     await callback.answer('Run has finished or stopped.')
-
-
-@dispatcher.callback_query_handler(Regexp(r'^page_\d+$'), state=(Scrape.group_from, Scrape.group_to))
+@dispatcher.callback_query_handler(Regexp(r'^page_\d+$'), state=Scrape.select_group)
 async def select_group_page(callback: CallbackQuery, state: FSMContext):
     page = int(callback.data.split('_')[1])
     async with state.proxy() as user_data:
@@ -525,8 +506,75 @@ async def select_group_page(callback: CallbackQuery, state: FSMContext):
                 groups = user_data['groups']
             user_data['list_page'] = page
             reply_markup = keyboards.groups_list(groups, page)
-            await callback.message.edit_reply_markup(reply_markup=reply_markup)
+            await callback.message.edit_reply_markup(reply_markup)
     await callback.answer()
+
+
+@dispatcher.callback_query_handler(Regexp(r'\d+'), state=Scrape.select_multiple_groups)
+async def select_multiple_groups(callback: CallbackQuery, state: FSMContext):
+    val = callback.data
+    async with state.proxy() as user_data:
+        if 'groups' not in user_data:
+            queue = user_data['queue']
+            groups = queue.get_nowait()
+            queue.task_done()
+            user_data['groups'] = groups
+            page = 1
+            user_data['list_page'] = page
+            selected = []
+        else:
+            groups = user_data['groups']
+            selected = user_data['selected_groups']
+            page = user_data['list_page']
+        if val in selected:
+            selected.remove(val)
+        else:
+            selected.append(callback.data)
+        user_data['selected_groups'] = selected
+    reply_markup = keyboards.multiple_groups(groups, selected, page)
+    await callback.message.edit_reply_markup(reply_markup)
+    await callback.answer()
+
+
+@dispatcher.callback_query_handler(Regexp(r'^page_\d+$'), state=Scrape.select_multiple_groups)
+async def select_multiple_groups_page(callback: CallbackQuery, state: FSMContext):
+    page = int(callback.data.split('_')[1])
+    async with state.proxy() as user_data:
+        try:
+            groups = user_data['groups']
+        except KeyError:
+            queue = user_data['queue']
+            groups = queue.get_nowait()
+            queue.task_done()
+            user_data['groups'] = groups
+            selected = []
+            old_page = 1
+        else:
+            selected = user_data['selected_groups']
+            old_page = user_data['list_page']
+        if old_page != page:
+            user_data['list_page'] = page
+            reply_markup = keyboards.multiple_groups(groups, selected, page)
+            await callback.message.edit_reply_markup(reply_markup)
+    await callback.answer()
+
+
+@dispatcher.callback_query_handler(CallbackData('done'), state=Scrape.select_multiple_groups)
+async def select_multiple_groups_done(callback: CallbackQuery, state: FSMContext):
+    async with state.proxy() as user_data:
+        try:
+            selected = user_data['selected_groups']
+        except KeyError:
+            selected = None
+        if selected:
+            await state.reset_state(with_data=False)
+            await callback.message.delete()
+            queue = user_data['queue']
+            queue.put_nowait(selected)
+            msg = ''
+        else:
+            msg = 'Please select at least one group.'
+    await callback.answer(msg)
 
 
 @dispatcher.callback_query_handler(CallbackData('blank'), state='*')

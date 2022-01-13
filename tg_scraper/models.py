@@ -18,7 +18,8 @@ class Account(Model):
     session_string = fields.TextField(null=True)
     invites_max = fields.IntField(null=True)
     invites_sent = fields.IntField(default=0)
-    last_invite_date = fields.DatetimeField(null=True)
+    invites_reset_at = fields.DatetimeField(null=True)
+    # last_invite_date = fields.DatetimeField(null=True)
     master = fields.BooleanField(default=False)
     auto_created = fields.BooleanField(default=False)
     created_at = fields.DatetimeField(auto_now_add=True)
@@ -28,7 +29,7 @@ class Account(Model):
 
     async def invites_incr(self, num=1):
         self.invites_sent += num
-        self.last_invite_date = datetime.datetime.now()
+        # self.last_invite_date = datetime.datetime.now()
         await self.save()
 
     @property
@@ -40,10 +41,10 @@ class Account(Model):
         return self.invites_max - self.invites_sent
 
     async def refresh_invites(self):
-        limit_reset = Settings().limit_reset
+        # limit_reset = Settings().limit_reset
         if not self.can_invite:
-            last_invite_date = self.last_invite_date.replace(tzinfo=None)
-            if last_invite_date + datetime.timedelta(days=limit_reset) >= datetime.datetime.now():
+            reset_at = self.invites_reset_at.replace(tzinfo=None)
+            if datetime.datetime.now() >= reset_at:
                 self.invites_sent = 0
                 await self.save()
 

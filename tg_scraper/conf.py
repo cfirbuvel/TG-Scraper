@@ -72,6 +72,17 @@ class Settings:
         val = 'yes' if val else 'no'
         self.save_val('skip_sign_in', val)
 
+    @property
+    def proxy(self):
+        section = 'proxy'
+        return {
+            'proxy_type': self.config.get(section, 'type', fallback='http'),
+            'addr': self.config.get(section, 'address'),
+            'port': self.config.getint(section, 'port'),
+            'username': self.config.get(section, 'username'),
+            'password': self.config.get(section, 'password')
+        }
+
     def get_detail_msg(self):
         return ('⚙  SettingsState\n\n'
                 'Max last seen days: <code>{}</code>\n'

@@ -35,6 +35,8 @@ class Scrape(StatesGroup):
     enter_code = State()
     resend_code = State()
 
-    group_from = State()
-    group_to = State()
+    select_group = State()
+    select_multiple_groups = State()
+    # group_from = State()
+    # group_to = State()
 

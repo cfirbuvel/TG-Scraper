@@ -171,3 +171,28 @@ def groups_list(items, page=1):
     rows = general_list(items, page)
     # rows.append([{'text': '☠️Stop Run', 'callback_data': 'stop_run'}])
     return rows
+
+
+@inline_markup
+def multiple_groups(items, selected=[], page=1):
+    total_len = len(items)
+    start = (page - 1) * PAGE_SIZE
+    end = page * PAGE_SIZE
+    items = items[start:end]
+    rows = []
+    for id, name in items:
+        icon = '☑' if id in selected else '◻'
+        rows.append([{'text': '{} {}'.format(name, icon), 'callback_data': id}])
+    if len(items) < total_len:
+        last_page = math.ceil(total_len / PAGE_SIZE)
+        prev_page = page - 1 or last_page
+        next_page = page + 1
+        if next_page > last_page:
+            next_page = 1
+        rows.append([
+            {'text': '⏪ Prev', 'callback_data': 'page_{}'.format(prev_page)},
+            {'text': 'Page {}'.format(page), 'callback_data': 'blank'},
+            {'text': '⏩ Next', 'callback_data': 'page_{}'.format(next_page)}
+        ])
+    rows.append([{'text': '✅ Done', 'callback_data': 'done'}])
+    return rows

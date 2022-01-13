@@ -6,7 +6,7 @@ from telethon.tl.types import TypeUser
 
 from . import keyboards
 from .bot import dispatcher
-from .conf import Settings
+# from .conf import Settings
 from .states import Scrape
 from .utils import exc_to_msg
 
@@ -20,6 +20,9 @@ class TgClient(TelegramClient):
     def __init__(self, account, *args, **kwargs):
         self.account = account
         session = StringSession(string=account.session_string)
+        # self.chat_id = chat_id
+        # self.queue = queue
+        # self.skip_sign_in = skip_sign_in
         # self.chat_id = kwargs.pop('chat_id')
         # self.queue = kwargs.pop('queue')
         # session = AccountSession(account)

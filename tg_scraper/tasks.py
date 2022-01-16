@@ -251,6 +251,9 @@ async def scrape_repeatedly(chat_id, queue: asyncio.Queue):
                 await queue.join()
                 from_ids = [int(item) for item in await queue.get()]
                 queue.task_done()
+            if not master:
+                await bot.send_message('No accounts available now. Stopping.')
+                break
             msg = await bot.send_message(chat_id, 'Adding users')
             loading_task = asyncio.create_task(show_loading(msg))
             async for user in aggressive_iter(master.iter_participants(to_id, aggressive=True)):
@@ -374,6 +377,9 @@ async def scrape_repeatedly(chat_id, queue: asyncio.Queue):
             await client.disconnect()
         await asyncio.gather(tasks)
         await bot.send_message(chat_id, 'Run stopped.')
+    if master:
+        await master.save_session()
+        await master.disconnect()
     await Menu.main.set()
     await bot.send_message(chat_id, 'Main', reply_markup=keyboards.main_menu())
 

@@ -18,12 +18,13 @@ from telethon.errors.rpcerrorlist import (UserAlreadyParticipantError, UserPriva
                                           FloodWaitError, PeerFloodError, ChatWriteForbiddenError, ChannelPrivateError,
                                           ChatAdminRequiredError, ApiIdInvalidError, PhoneNumberBannedError,
                                           PhoneNumberUnoccupiedError, PhoneCodeInvalidError, PhoneCodeExpiredError)
+from telethon import helpers
 from telethon.tl.functions.account import UpdateProfileRequest
 from telethon.tl.functions.channels import InviteToChannelRequest, GetParticipantsRequest
 from telethon.tl.functions.contacts import ImportContactsRequest
-from telethon.tl.functions.messages import AddChatUserRequest
+from telethon.tl.functions.messages import AddChatUserRequest, GetFullChatRequest
 from telethon.tl.functions.users import GetFullUserRequest
-from telethon.tl.types import InputPhoneContact, ChannelParticipantsRecent, TypeUser
+from telethon.tl.types import InputPhoneContact, ChannelParticipantsSearch, TypeUser
 from telethon.tl.types.auth import SentCode
 
 from . import keyboards
@@ -80,27 +81,30 @@ async def add_to_group(client, group, user_id):
     return True
 
 
-# async def get_participants(client, group, full_user=False, filter_obj=ChannelParticipantsRecent()):
-#     input_group = await client.get_input_entity(group)
-#     limit = 100
-#     offset = 0
-#     while True:
-#         result = await client(GetParticipantsRequest(input_group, filter=filter_obj, offset=offset, limit=limit, hash=0))
-#         if not result.users:
-#             return
-#         for user in result.users:
-#             if full_user:
-#                 user = await client(GetFullUserRequest(user.id))
-#             yield user
-#         offset += len(result.users)
-#         await asyncio.sleep(0.25)
+async def get_participants(client, group_id, delay=0.5):
+    entity = await client.get_entity(group_id)
+    ty = helpers._entity_type(entity)
+    if ty == helpers._EntityType.CHAT:
+        full = await client(GetFullChatRequest(entity))
+        for user in full.users:
+            yield user
+    else:
+        limit = 100
+        offset = 0
+        while True:
+            result = await client(GetParticipantsRequest(entity, filter=ChannelParticipantsSearch(''), offset=offset, limit=limit, hash=0))
+            if not result.users:
+                return
+            for user in result.users:
+                yield user
+            offset += len(result.users)
+            await asyncio.sleep(delay)
 
 
-async def aggressive_iter(coroutine):
+async def aggressive_iter(coroutine, delay=0.005):
     i = 1
     async for item in coroutine:
-        if i % 100 == 0:
-            await asyncio.sleep(0.35)
+        await asyncio.sleep(delay)
         yield item
         i += 1
 
@@ -153,9 +157,10 @@ async def add_users(client, from_id, to_id, users_added, lock):
     acc = client.account
     settings = Settings()
     last_seen_filter = settings.last_seen_filter
-    from_group = await client.get_entity(from_id)
+    # from_group = await client.get_entity(from_id)
     to_group = await client.get_entity(to_id)
-    async for user in aggressive_iter(client.iter_participants(from_group, aggressive=True)):
+    # async for user in aggressive_iter(client.iter_participants(from_group, aggressive=True), delay=0.05):
+    async for user in get_participants(client, from_id):
         user_id = user.id
         if user_active(user) and user_id not in users_added and user_status_valid(user, last_seen_filter):
             try:
@@ -180,7 +185,8 @@ async def add_users(client, from_id, to_id, users_added, lock):
             name = '{} {}'.format(user.first_name, user.last_name)
             logger.info('Added user %s', name)
             await acc.invites_incr()
-            await asyncio.sleep(2)
+            delay = random.randint(30, 120)
+            await asyncio.sleep(delay)
         if not acc.can_invite:
             break
     acc.invites_reset_at = datetime.datetime.now() + datetime.timedelta(days=settings.limit_reset)
@@ -223,15 +229,16 @@ async def scrape_repeatedly(chat_id, queue: asyncio.Queue):
                         await bot.send_message(chat_id, 'Skipping account')
                         await master.save_session()
                         await master.disconnect()
+                        master = None
                         await asyncio.sleep(1)
                 if not master:
-                    await bot.send_message('No accounts available now. Stopping.')
+                    await bot.send_message(chat_id, 'No accounts available now. Stopping.')
                     break
                 groups = {}
                 async for dialog in master.iter_dialogs():
                     if dialog.is_group:
                         num_participants = dialog.entity.participants_count
-                        groups[str(dialog.id)] = (dialog.title, num_participants)
+                        groups[str(dialog.id)] = (dialog.title[:50], num_participants)
                 if len(groups) < 2:
                     msg = 'Main/first account should be a member of at least 2 groups (source and target).'
                     await bot.send_message(chat_id, msg)
@@ -256,13 +263,15 @@ async def scrape_repeatedly(chat_id, queue: asyncio.Queue):
                 queue.task_done()
             msg = await bot.send_message(chat_id, 'Adding users')
             loading_task = asyncio.create_task(show_loading(msg))
-            async for user in aggressive_iter(master.iter_participants(to_id, aggressive=True)):
+            # async for user in aggressive_iter(master.iter_participants(to_id, aggressive=True)):
+            async for user in get_participants(master, to_id):
                 if user_active(user):
                     users_added.add(user.id)
             group_counts = {}
             for group_id in from_ids:
                 count = 0
-                async for user in aggressive_iter(master.iter_participants(group_id, aggressive=True)):
+                async for user in get_participants(master, group_id):
+                # async for user in aggressive_iter(master.iter_participants(group_id, aggressive=True)):
                     if user_active(user) and user.id not in users_added:
                         count += 1
                 if count:
@@ -289,7 +298,14 @@ async def scrape_repeatedly(chat_id, queue: asyncio.Queue):
                             await update_name(client)
                             phone_contact = InputPhoneContact(client_id=user.id, phone=user.phone,
                                                               first_name=user.first_name, last_name=user.last_name)
-                            await master(ImportContactsRequest([phone_contact]))
+                            try:
+                                await master(ImportContactsRequest([phone_contact]))
+                            except UserDeactivatedBanError:
+                                clients.pop()
+                                logger.error('Deleting account {}'.format(acc.name))
+                                await acc.delete()
+                                await client.disconnect()
+                                continue
                             phone_contact = InputPhoneContact(client_id=master_user.id, phone=master_user.phone,
                                                               first_name=master_user.first_name,
                                                               last_name=master_user.last_name)
@@ -351,6 +367,7 @@ async def scrape_repeatedly(chat_id, queue: asyncio.Queue):
                                 break
                             continue
                     logger.error('Deleting account {}'.format(acc.name))
+                    clients.pop()
                     await acc.delete()
                     await client.disconnect()
             await asyncio.gather(tasks)

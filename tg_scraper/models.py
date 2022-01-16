@@ -75,3 +75,9 @@ async def init_db():
         modules={'models': ['tg_scraper.models']}
     )
     await Tortoise.generate_schemas()
+    acc = await Account.all().first()
+    # print(acc.name)
+    # print(acc.invites_max)
+    # print(acc.invites_left)
+    # acc.invites_sent = 30
+    # await acc.save()

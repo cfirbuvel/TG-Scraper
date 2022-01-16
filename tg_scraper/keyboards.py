@@ -145,7 +145,7 @@ def last_seen_filter():
 @inline_markup
 def start_scrape():
     return [
-        [{'text': '▶ Run once', 'callback_data': 'once'}],
+        # [{'text': '▶ Run once', 'callback_data': 'once'}],
         [{'text': '🔁 Run every 24 hours', 'callback_data': 'repeatedly'}],
         [{'text': '↩ Back', 'callback_data': 'to_menu'}],
     ]

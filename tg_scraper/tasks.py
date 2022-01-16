@@ -100,7 +100,7 @@ async def aggressive_iter(coroutine):
     i = 1
     async for item in coroutine:
         if i % 100 == 0:
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.35)
         yield item
         i += 1
 

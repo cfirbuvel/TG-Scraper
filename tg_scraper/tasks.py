@@ -224,6 +224,9 @@ async def scrape_repeatedly(chat_id, queue: asyncio.Queue):
                         await master.save_session()
                         await master.disconnect()
                         await asyncio.sleep(1)
+                if not master:
+                    await bot.send_message('No accounts available now. Stopping.')
+                    break
                 groups = {}
                 async for dialog in master.iter_dialogs():
                     if dialog.is_group:
@@ -251,9 +254,6 @@ async def scrape_repeatedly(chat_id, queue: asyncio.Queue):
                 await queue.join()
                 from_ids = [int(item) for item in await queue.get()]
                 queue.task_done()
-            if not master:
-                await bot.send_message('No accounts available now. Stopping.')
-                break
             msg = await bot.send_message(chat_id, 'Adding users')
             loading_task = asyncio.create_task(show_loading(msg))
             async for user in aggressive_iter(master.iter_participants(to_id, aggressive=True)):

@@ -439,14 +439,11 @@ async def run_scrape(callback: CallbackQuery, state: FSMContext):
 
 @dispatcher.message_handler(commands=['stop'], state='*')
 async def on_stop(message: Message, state: FSMContext):
-    stopped = False
     for task in asyncio.all_tasks():
         if task.get_name() == str(message.chat.id):
             task.cancel()
-            stopped = True
-    if stopped:
-        await message.answer('Stopping run.')
-        await state.reset_state()
+            await state.reset_state()
+            break
     else:
         await message.answer('There is no active task at the moment.')
         await to_main_menu(message)

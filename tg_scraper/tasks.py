@@ -370,7 +370,7 @@ async def scrape_repeatedly(chat_id, queue: asyncio.Queue):
                     clients.pop()
                     await acc.delete()
                     await client.disconnect()
-            await asyncio.gather(tasks)
+            await asyncio.gather(*tasks)
             for client in clients:
                 await client.save_session()
                 await client.disconnect()
@@ -392,7 +392,8 @@ async def scrape_repeatedly(chat_id, queue: asyncio.Queue):
         for client in clients:
             await client.save_session()
             await client.disconnect()
-        await asyncio.gather(tasks)
+        if tasks:
+            await asyncio.gather(*tasks)
         await bot.send_message(chat_id, 'Run stopped.')
     if master:
         await master.save_session()

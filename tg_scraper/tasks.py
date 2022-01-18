@@ -601,4 +601,4 @@ async def show_loading(message):
     async for sym in aioitertools.cycle(symbols):
         msg = '{} {}'.format(text, sym)
         message = await message.edit_text(msg)
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(1)

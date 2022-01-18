@@ -92,7 +92,11 @@ async def get_participants(client, group_id, delay=0.5):
         limit = 100
         offset = 0
         while True:
-            result = await client(GetParticipantsRequest(entity, filter=ChannelParticipantsSearch(''), offset=offset, limit=limit, hash=0))
+            try:
+                result = await client(GetParticipantsRequest(entity, filter=ChannelParticipantsSearch(''), offset=offset, limit=limit, hash=0))
+            except (UserDeactivatedBanError, UserBannedInChannelError, UserBlockedError, UserKickedError) as e:
+                logger.info(e)
+                return
             if not result.users:
                 return
             for user in result.users:
@@ -153,6 +157,7 @@ async def sign_in(client, chat_id, queue):
             code = answer
 
 
+# TODO: Handle user deactivated ban error (Delete account)
 async def add_users(client, from_id, to_id, users_added, lock):
     acc = client.account
     settings = Settings()
@@ -177,12 +182,12 @@ async def add_users(client, from_id, to_id, users_added, lock):
                     ChatAdminRequiredError) as e:
                 logger.info(str(e))
                 logger.info('Skipping client.')
-                return
+                break
             # except (ChatWriteForbiddenError, ChannelPrivateError, ChatAdminRequiredError) as e:
             #     msg = exc_to_msg(e) + '\nAborting run.'
             #     await bot.send_message(chat_id, sign_msg(msg))
             #     return
-            name = '{} {}'.format(user.first_name, user.last_name)
+            name = ' '.join(filter(None, (user.first_name, user.last_name)))
             logger.info('Added user %s', name)
             await acc.invites_incr()
             delay = random.randint(30, 120)
@@ -297,8 +302,9 @@ async def scrape_repeatedly(chat_id, queue: asyncio.Queue):
                         if not user.deleted:
                             await update_name(client)
                             phone_contact = InputPhoneContact(client_id=user.id, phone=user.phone,
-                                                              first_name=user.first_name, last_name=user.last_name)
+                                                              first_name=user.first_name or '', last_name=user.last_name or '')
                             try:
+
                                 await master(ImportContactsRequest([phone_contact]))
                             except UserDeactivatedBanError:
                                 clients.pop()
@@ -307,8 +313,8 @@ async def scrape_repeatedly(chat_id, queue: asyncio.Queue):
                                 await client.disconnect()
                                 continue
                             phone_contact = InputPhoneContact(client_id=master_user.id, phone=master_user.phone,
-                                                              first_name=master_user.first_name,
-                                                              last_name=master_user.last_name)
+                                                              first_name=master_user.first_name or '',
+                                                              last_name=master_user.last_name or '')
                             await client(ImportContactsRequest([phone_contact]))
                             passed = False
                             while True:
@@ -370,11 +376,13 @@ async def scrape_repeatedly(chat_id, queue: asyncio.Queue):
                     clients.pop()
                     await acc.delete()
                     await client.disconnect()
-            await asyncio.gather(*tasks)
-            for client in clients:
+            if tasks:
+                await asyncio.gather(*tasks)
+                tasks = []
+            while clients:
+                client = clients.pop()
                 await client.save_session()
                 await client.disconnect()
-            tasks = []
             loading_task.cancel()
             await loading_task
             await bot.send_message(chat_id, 'Users added.')
@@ -595,9 +603,10 @@ async def scrape_repeatedly(chat_id, queue: asyncio.Queue):
 #     await Main.main.set()
 #     await bot.send_message(chat_id, 'Main', reply_markup=Keyboard.main_menu)
 
+
 async def show_loading(message):
     text = message.text
-    symbols = '❤💔💙🔥'
+    symbols = '🕛🕐🕑🕒🕓🕔🕕🕖🕗🕘🕙🕚'
     async for sym in aioitertools.cycle(symbols):
         msg = '{} {}'.format(text, sym)
         message = await message.edit_text(msg)

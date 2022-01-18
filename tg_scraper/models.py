@@ -60,8 +60,8 @@ class Account(Model):
                f'Invites limit: <b>{self.invites_max}</b>\n'
                f'Invites sent: <b>{self.invites_sent}</b>')
         if not self.can_invite:
-            reset_at = self.last_invite_date + datetime.timedelta(days=Settings().limit_reset)
-            msg += '\nInvites reset at: <b>{}</b>'.format(reset_at.strftime('%d-%m-%Y %H:%M'))
+            # reset_at = self.last_invite_date + datetime.timedelta(days=Settings().limit_reset)
+            msg += '\nInvites reset at: <b>{}</b>'.format(self.invites_reset_at.strftime('%d-%m-%Y %H:%M'))
         if self.auto_created:
             msg += '\n<i>Account was created automatically.</i>'
         if self.master:
@@ -79,5 +79,5 @@ async def init_db():
     # print(acc.name)
     # print(acc.invites_max)
     # print(acc.invites_left)
-    # acc.invites_sent = 30
-    # await acc.save()
+    acc.invites_sent = 15
+    await acc.save()

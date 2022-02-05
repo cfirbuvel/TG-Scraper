@@ -1,14 +1,30 @@
 import asyncio
+import datetime
 import logging
+import random
 import re
 
 import aiosqlite
 from aiogram.utils.markdown import quote_html
+from telethon.helpers import _entity_type, _EntityType
 from telethon.sessions.string import StringSession
 from telethon.crypto import AuthKey
 
+from .models import Account
+
 
 logger = logging.getLogger(__name__)
+
+
+async def relative_sleep(delay):
+    delay = delay * 100
+    third = delay / 3
+    delay = random.randint(int(delay - third), int(delay + third)) / 100
+    await asyncio.sleep(delay)
+
+
+def is_channel(group):
+    return _entity_type(group) == _EntityType.CHANNEL
 
 
 def sign_msg(text, sign='💥'):
@@ -40,23 +56,11 @@ async def session_db_to_string(path):
             return obj.save()
 
 
+async def update_accounts_limits():
+    await Account.filter(invites_reset_at__gte=datetime.datetime.now()).update(invites_sent=0)
+
+
 class Queue(asyncio.Queue):
 
     def __deepcopy__(self, memo={}):
         return self
-
-
-# # TODO: Change to Redis storage
-# class Storage(MemoryStorage):
-#
-#     async def wait_for_value(self, key, timeout=86400):
-#         sleep_for = 0.3
-#         while True:
-#             data = await self.get_data()
-#             try:
-#                 return data[key]
-#             except KeyError:
-#                 await asyncio.sleep(sleep_for)
-#                 timeout -= sleep_for
-#                 if timeout <= 0:
-#                     raise TimeoutError('Timeout exceeded.')

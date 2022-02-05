@@ -25,10 +25,10 @@ def inline_markup(func):
 @inline_markup
 def main_menu():
     return [
-        [{'text': '🤖  Add account', 'callback_data': 'add_acc'}],
-        [{'text': '🗂  Accounts', 'callback_data': 'accounts'}],
-        [{'text': '⚙️  Settings', 'callback_data': 'settings_menu'}],
-        [{'text': '💥  Start scrape', 'callback_data': 'start_scrape'}],
+        [{'text': '🤖 Add account', 'callback_data': 'add_acc'}],
+        [{'text': '🗂 Accounts', 'callback_data': 'accounts'}],
+        [{'text': '⚙️ Settings', 'callback_data': 'settings_menu'}],
+        [{'text': '💥 Scrape', 'callback_data': 'scrape'}],
     ]
 
 
@@ -63,14 +63,6 @@ def code_request():
 
 
 def general_list(items, page):
-    # if action:
-    #     op = {'prev': operator.sub, 'next': operator.add}[action]
-    #     page = op(page, 1)
-    #     last_page = math.ceil(total_len / PAGE_SIZE)
-    #     if page == 0:
-    #         page = last_page
-    #     elif page > last_page:
-    #         page = 1
     total_len = len(items)
     start = (page - 1) * PAGE_SIZE
     end = page * PAGE_SIZE
@@ -111,7 +103,7 @@ def settings_menu():
     return [
         [{'text': '🎛 Run', 'callback_data': 'run'}],
         [{'text': '🚷 Last seen filter', 'callback_data': 'last_seen_filter'}],
-        [{'text': '⏱ Accounts invite delay', 'callback_data': 'join_delay'}],
+        [{'text': '⏱ Group join delay', 'callback_data': 'join_delay'}],
         [{'text': '💾 Add sessions', 'callback_data': 'add_sessions'}],
         [{'text': '↩ Back', 'callback_data': 'to_menu'}]
     ]
@@ -119,11 +111,11 @@ def settings_menu():
 
 @inline_markup
 def run_settings():
-    skip_sign_in = 'Skip sign in{}'.format(' ☑' if Settings().skip_sign_in else '')
+    # skip_sign_in = 'Skip sign in{}'.format(' ☑' if Settings().skip_sign_in else '')
     return [
         [{'text': '🎚 Invites limit', 'callback_data': 'invites'}],
         [{'text': '⌛ Limit reset', 'callback_data': 'reset'}],
-        [{'text': skip_sign_in, 'callback_data': 'skip_sign_in'}],
+        # [{'text': skip_sign_in, 'callback_data': 'skip_sign_in'}],
         [{'text': '↩ Back', 'callback_data': 'back'}]
     ]
 
@@ -143,11 +135,40 @@ def last_seen_filter():
 
 
 @inline_markup
-def start_scrape():
+def scrape_menu():
     return [
-        # [{'text': '▶ Run once', 'callback_data': 'once'}],
-        [{'text': '🔁 Run every 24 hours', 'callback_data': 'repeatedly'}],
+        [{'text': '🔗 Groups', 'callback_data': 'groups'}],
+        [{'text': '✈ Run', 'callback_data': 'start'}],
+        # [{'text': '🔁 Run every 24 hours', 'callback_data': 'repeatedly'}],
         [{'text': '↩ Back', 'callback_data': 'to_menu'}],
+    ]
+
+
+@inline_markup
+def groups():
+    return [
+        [{'text': '📝 Add', 'callback_data': 'add'}],
+        [{'text': '💾 Groups', 'callback_data': 'list'}],
+        [{'text': '↩ Back', 'callback_data': 'back'}],
+    ]
+
+
+@inline_markup
+def groups_list(groups, page=1):
+    items = [(group.id, group.label) for group in groups]
+    rows = general_list(items, page)
+    rows.append([{'text': '↩ Back', 'callback_data': 'back'}])
+    return rows
+
+
+@inline_markup
+def group_detail(group):
+    status = '⚡️ Enabled' if group.enabled else '💤 Disabled'
+    return [
+        [{'text': status, 'callback_data': 'status'}],
+        [{'text': '❤️  Set as target', 'callback_data': 'group_to'}],
+        [{'text': '🗑 Delete', 'callback_data': 'delete'}],
+        [{'text': '↩ Back', 'callback_data': 'back'}]
     ]
 
 
@@ -159,40 +180,46 @@ def task_already_running():
     ]
 
 
+@inline_markup
+def max_btn(val):
+    return [
+        [{'text': '📶 Max', 'callback_data': str(val)}]
+    ]
+
+@inline_markup
+def stop_run():
+    return [
+        [{'text': '⏻️Stop', 'callback_data': 'stop_run'}],
+    ]
+
+
+
 # @inline_markup
-# def stop_run():
-#     return [
-#         [{'text': '☠️Stop Run', 'callback_data': 'stop_run'}],
-#     ]
-
-
-@inline_markup
-def groups_list(items, page=1):
-    rows = general_list(items, page)
-    # rows.append([{'text': '☠️Stop Run', 'callback_data': 'stop_run'}])
-    return rows
-
-
-@inline_markup
-def multiple_groups(items, selected=[], page=1):
-    total_len = len(items)
-    start = (page - 1) * PAGE_SIZE
-    end = page * PAGE_SIZE
-    items = items[start:end]
-    rows = []
-    for id, name in items:
-        icon = '☑' if id in selected else '◻'
-        rows.append([{'text': '{} {}'.format(name, icon), 'callback_data': id}])
-    if len(items) < total_len:
-        last_page = math.ceil(total_len / PAGE_SIZE)
-        prev_page = page - 1 or last_page
-        next_page = page + 1
-        if next_page > last_page:
-            next_page = 1
-        rows.append([
-            {'text': '⏪ Prev', 'callback_data': 'page_{}'.format(prev_page)},
-            {'text': 'Page {}'.format(page), 'callback_data': 'blank'},
-            {'text': '⏩ Next', 'callback_data': 'page_{}'.format(next_page)}
-        ])
-    rows.append([{'text': '✅ Done', 'callback_data': 'done'}])
-    return rows
+# def groups_list(items, page=1):
+#     rows = general_list(items, page)
+#     return rows
+#
+#
+# @inline_markup
+# def multiple_groups(items, selected=[], page=1):
+#     total_len = len(items)
+#     start = (page - 1) * PAGE_SIZE
+#     end = page * PAGE_SIZE
+#     items = items[start:end]
+#     rows = []
+#     for id, name in items:
+#         icon = '☑' if id in selected else '◻'
+#         rows.append([{'text': '{} {}'.format(name, icon), 'callback_data': id}])
+#     if len(items) < total_len:
+#         last_page = math.ceil(total_len / PAGE_SIZE)
+#         prev_page = page - 1 or last_page
+#         next_page = page + 1
+#         if next_page > last_page:
+#             next_page = 1
+#         rows.append([
+#             {'text': '⏪ Prev', 'callback_data': 'page_{}'.format(prev_page)},
+#             {'text': 'Page {}'.format(page), 'callback_data': 'blank'},
+#             {'text': '⏩ Next', 'callback_data': 'page_{}'.format(next_page)}
+#         ])
+#     rows.append([{'text': '✅ Done', 'callback_data': 'done'}])
+#     return rows

@@ -1,76 +1,150 @@
+import logging
+
 from telethon.client import TelegramClient
-from telethon.errors.rpcerrorlist import (FloodWaitError,  ApiIdInvalidError, PhoneNumberBannedError,
-                                          PhoneNumberUnoccupiedError, PhoneCodeInvalidError, PhoneCodeExpiredError)
+from telethon.errors.rpcerrorlist import *
+from telethon.helpers import _entity_type, _EntityType
+from telethon.sessions.memory import MemorySession
 from telethon.sessions.string import StringSession
-from telethon.tl.types import TypeUser
+# from telethon.errors.rpcerrorlist import ChatInvalidError
+from telethon.tl.functions.contacts import GetBlockedRequest, UnblockRequest
+from telethon.tl.functions.channels import GetParticipantsRequest, DeleteChannelRequest, JoinChannelRequest, \
+    InviteToChannelRequest, GetParticipantRequest
+from telethon.tl.functions.messages import GetFullChatRequest, DeleteChatRequest, CheckChatInviteRequest, \
+    ImportChatInviteRequest, AddChatUserRequest
+from telethon.tl.types import ChannelParticipantsSearch, ChatInviteAlready
+from tortoise.exceptions import DoesNotExist
+# from telethon.utils
 
 from . import keyboards
 from .bot import dispatcher
-# from .conf import Settings
 from .states import Scrape
-from .utils import exc_to_msg
+from .utils import relative_sleep, is_channel
 
 
-class NotAuthenticatedError(Exception):
+logger = logging.getLogger(__name__)
+
+
+class IsBroadcastChannelError(Exception):
     pass
 
 
 class TgClient(TelegramClient):
 
-    def __init__(self, account, *args, **kwargs):
+    def __init__(self, account, store_session=True, *args, **kwargs):
         self.account = account
         session = StringSession(string=account.session_string)
-        # self.chat_id = chat_id
-        # self.queue = queue
-        # self.skip_sign_in = skip_sign_in
-        # self.chat_id = kwargs.pop('chat_id')
-        # self.queue = kwargs.pop('queue')
-        # session = AccountSession(account)
+        self.store_session = store_session
         super().__init__(session, account.api_id, account.api_hash, *args, **kwargs)
 
-    # async def boot(self):
-    #     await self.connect()
-    #     if not await self.is_user_authorized():
-    #         if settings_menu.skip_sign_in:
-    #             raise NotAuthenticatedError()
-    #         bot = dispatcher.bot
-    #         acc = self.account
-    #         await bot.send_message(self.chat_id, 'Signing in <b>{}</b>'.format(acc.safe_name))
-    #         code = None
-    #         while True:
-    #             try:
-    #                 res = await self.sign_in(acc.phone, code)
-    #             except (ApiIdInvalidError, PhoneNumberBannedError, FloodWaitError, PhoneNumberUnoccupiedError) as e:
-    #                 await bot.send_message(self.chat_id, exc_to_msg(e), disable_web_page_preview=True)
-    #                 if type(e) in (ApiIdInvalidError, PhoneNumberBannedError):
-    #                     await acc.delete()
-    #                     await bot.send_message(self.chat_id, 'Account has been deleted.')
-    #                 raise NotAuthenticatedError()
-    #             except (PhoneCodeInvalidError, PhoneCodeExpiredError) as e:
-    #                 msg = ('{}\n'
-    #                        'You can reenter code.\n'
-    #                        '<i>Keep in mind that after several attempts Telegram might'
-    #                        ' temporarily block account from signing in .</i>').format(exc_to_msg(e))
-    #             else:
-    #                 if isinstance(res, TypeUser):
-    #                     return
-    #                 msg = ('Code was sent to <b>{}</b>\n'
-    #                        'Please divide it with whitespaces, like: <i>41 9 78</i>').format(acc.safe_name)
-    #             await Scrape.enter_code.set()
-    #             await bot.send_message(self.chat_id, msg, reply_markup=keyboards.code_request())
-    #             answer = await self.queue.get()
-    #             self.queue.task_done()
-    #             if answer == 'skip':
-    #                 raise NotAuthenticatedError()
-    #             if answer == 'resend':
-    #                 code = None
-    #             else:
-    #                 code = answer
+    async def get_group_user(self, group, user):
+        if _entity_type(group) == _EntityType.CHANNEL:
+            try:
+                res = await self(GetParticipantRequest(group, user))
+            except:
+                pass
+
+    async def join_group(self, link):
+        middle, end = link.split('/')[-2:]
+        if middle.lower() == 'joinchat' or end.startswith('+'):
+            link = end.lstrip('+')
+            invite = await self(CheckChatInviteRequest(link))
+            if type(invite) == ChatInviteAlready:
+                return invite.chat
+            await relative_sleep(1.5)
+            res = await self(ImportChatInviteRequest(link))
+            res = res.chats[0]
+        else:
+            res = await self(JoinChannelRequest(link))
+            res = res.chats[0]
+            if res.broadcast:
+                raise IsBroadcastChannelError()
+        return res
+
+    async def invite_to_group(self, user, entity):
+        if is_channel(entity):
+            try:
+                await self(GetParticipantRequest(entity, user))
+                raise UserAlreadyParticipantError('Temp.')
+            except UserNotParticipantError:
+                return await self(InviteToChannelRequest(channel=entity, users=[user]))
+        else:
+            await self(AddChatUserRequest(chat_id=entity.id, user_id=user.id, fwd_limit=50))
+
+    async def get_participants(self, group, filter=ChannelParticipantsSearch('')):
+        if _entity_type(group) == _EntityType.CHANNEL:
+            users = []
+            limit = 100
+            offset = 0
+            while True:
+                # try:
+                res = await self(GetParticipantsRequest(group, filter=filter, offset=offset, limit=limit, hash=0))
+                # except (UserDeactivatedBanError, UserBannedInChannelError, UserBlockedError, UserKickedError) as e:
+                #     logger.info(e)
+                #     return
+                if not res.users:
+                    break
+                users += res.users
+                offset += len(res.users)
+                await relative_sleep(0.5)
+        else:
+            full_chat = await self(GetFullChatRequest(group.id))
+            users = full_chat.users
+        return users
+
+    async def clear_dialogs(self, free_slots=1):
+        dialogs = await self.get_dialogs()
+        dialogs = list(filter(lambda x: x.is_group, dialogs))
+        delete_num = len(dialogs) - 500 - free_slots
+        delete_num = max(0, delete_num)
+        for i in range(delete_num):
+            await self.burn_dialog(dialogs[-i])
+            await relative_sleep(2.5)
+
+    async def burn_dialog(self, dialog):
+        entity = dialog.entity
+        if entity.creator:
+            if _entity_type(entity) == _EntityType.CHAT:
+                await self(DeleteChatRequest(entity.id))
+            else:
+                await self(DeleteChannelRequest(entity))
+        else:
+            await dialog.delete()
+
+    async def clear_blocked(self):
+        limit = 100
+        offset = 0
+        while True:
+            blocked = await self(GetBlockedRequest(offset, limit))
+            users = blocked.users
+            if not users:
+                return
+            for user in users:
+                await self(UnblockRequest(user))
+                await relative_sleep(0.7)
+            offset += len(users)
 
     async def save_session(self):
+        try:
+            await self.account.refresh_from_db()
+        except DoesNotExist:
+            return
         session_string = self.session.save()
         self.account.session_string = session_string
         await self.account.save()
+
+    # async def __call__(self, request, ordered=False, flood_sleep_threshold=None):
+    #     try:
+    #         return await super().__call__(request, ordered, flood_sleep_threshold)
+    #     except UserDeactivatedBanError:
+    #         acc = self.account
+    #         logger.info('Account %s has been banned. Deleting from db.', acc.name)
+    #         await acc.delete()
+    #         raise
+
+    async def _tear_down(self):
+        if self.store_session:
+            await self.save_session()
+        await self.disconnect()
 
     async def __aenter__(self):
         await self.connect()
@@ -78,5 +152,4 @@ class TgClient(TelegramClient):
         return self
 
     async def __aexit__(self, *args):
-        await self.save_session()
-        await self.disconnect()
+        await self._tear_down()

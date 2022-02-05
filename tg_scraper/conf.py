@@ -84,7 +84,7 @@ class Settings:
         }
 
     def get_detail_msg(self):
-        return ('⚙  SettingsState\n\n'
+        return ('⚙  Settings\n\n'
                 'Max last seen days: <code>{}</code>\n'
                 'Join delay: <code>{}</code> seconds').format(self.last_seen_filter or 'Any', self.join_delay)
 
@@ -95,6 +95,4 @@ class Settings:
                 'Reset after: <code>{}</code> days\n').format(*self.invites_limit, self.limit_reset)
 
 
-
-
-
+settings = Settings()

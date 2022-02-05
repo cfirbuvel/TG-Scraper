@@ -18,7 +18,7 @@ class Accounts(StatesGroup):
     delete = State()
 
 
-class SettingsState(StatesGroup):
+class Settings(StatesGroup):
     main = State()
     run = State()
     invites_limit = State()
@@ -30,7 +30,14 @@ class SettingsState(StatesGroup):
 
 class Scrape(StatesGroup):
     main = State()
+    groups = State()
+    add_group = State()
+    groups_list = State()
+    group_detail = State()
     task_running = State()
+
+    # target_group_link = State()
+    add_limit = State()
 
     enter_code = State()
     resend_code = State()

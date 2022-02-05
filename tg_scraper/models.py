@@ -6,8 +6,6 @@ from aiogram.utils.markdown import quote_html
 from tortoise import fields, Tortoise
 from tortoise.models import Model
 
-from .conf import Settings
-
 
 class Account(Model):
     id = fields.IntField(pk=True)
@@ -19,7 +17,6 @@ class Account(Model):
     invites_max = fields.IntField(null=True)
     invites_sent = fields.IntField(default=0)
     invites_reset_at = fields.DatetimeField(null=True)
-    # last_invite_date = fields.DatetimeField(null=True)
     master = fields.BooleanField(default=False)
     auto_created = fields.BooleanField(default=False)
     created_at = fields.DatetimeField(auto_now_add=True)
@@ -27,9 +24,8 @@ class Account(Model):
     class Meta:
         ordering = ['-master', '-created_at']
 
-    async def invites_incr(self, num=1):
+    async def incr_invites(self, num=1):
         self.invites_sent += num
-        # self.last_invite_date = datetime.datetime.now()
         await self.save()
 
     @property
@@ -41,7 +37,6 @@ class Account(Model):
         return self.invites_max - self.invites_sent
 
     async def refresh_invites(self):
-        # limit_reset = Settings().limit_reset
         if not self.can_invite:
             reset_at = self.invites_reset_at.replace(tzinfo=None)
             if datetime.datetime.now() >= reset_at:
@@ -60,12 +55,48 @@ class Account(Model):
                f'Invites limit: <b>{self.invites_max}</b>\n'
                f'Invites sent: <b>{self.invites_sent}</b>')
         if not self.can_invite:
-            # reset_at = self.last_invite_date + datetime.timedelta(days=Settings().limit_reset)
             msg += '\nInvites reset at: <b>{}</b>'.format(self.invites_reset_at.strftime('%d-%m-%Y %H:%M'))
         if self.auto_created:
             msg += '\n<i>Account was created automatically.</i>'
         if self.master:
             msg = '🎩 Main account\n' + msg
+        return msg
+
+
+class Group(Model):
+    id = fields.IntField(pk=True)
+    name = fields.CharField(max_length=128, null=True)
+    link = fields.CharField(max_length=2048)
+    users_count = fields.IntField(null=True)
+    enabled = fields.BooleanField(default=True)
+    is_target = fields.BooleanField(default=False)
+    details = fields.CharField(max_length=256, null=True)
+
+    @property
+    def label(self):
+        res = self.link.split('/')[-1]
+        if self.is_target:
+            res = '❤️  {}'.format(res)
+        elif not self.enabled:
+            res = '💤  {}'.format(res)
+        return res
+
+    def get_name(self):
+        if self.name:
+            res = '{} ({})'.format(quote_html(self.name), self.link)
+        else:
+            res = self.link
+        if self.is_target:
+            res = '❤️  {}'.format(res)
+        return res
+
+    @property
+    def detail_msg(self):
+        users_count = 'unknown' if self.users_count is None else self.users_count
+        msg = ('{}\n\n'
+               'Participants count: <b>{}</b>').format(self.get_name(), users_count)
+        if self.details:
+            msg += '\n\n❕ {}'.format(self.details)
         return msg
 
 
@@ -75,9 +106,3 @@ async def init_db():
         modules={'models': ['tg_scraper.models']}
     )
     await Tortoise.generate_schemas()
-    acc = await Account.all().first()
-    # print(acc.name)
-    # print(acc.invites_max)
-    # print(acc.invites_left)
-    acc.invites_sent = 15
-    await acc.save()

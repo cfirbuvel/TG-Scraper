@@ -12,6 +12,7 @@ import time
 import aioitertools
 from faker import Faker
 import more_itertools
+from telethon import connection
 from telethon.errors.rpcerrorlist import *
 from telethon.tl.functions.account import UpdateProfileRequest
 from telethon.tl.functions.channels import InviteToChannelRequest, GetParticipantsRequest, JoinChannelRequest, \
@@ -35,16 +36,6 @@ from .utils import exc_to_msg, relative_sleep
 
 logger = logging.getLogger(__name__)
 
-
-# class GroupInvalidError(Exception):
-#
-#     def __init__(self, msg):
-#         self.msg = msg
-#         super().__init__(msg)
-#
-#
-# class TargetGroupBanError(Exception):
-#     pass
 
 class RunState:
 
@@ -153,77 +144,79 @@ async def worker(accounts, group_to, group_from, state: RunState):
     while accounts:
         acc = accounts.pop(0)
         start = time.time()
-        async with TgClient(acc, store_session=False, proxy=settings.proxy) as client:
-            if await client.is_user_authorized():
-                try:
-                    await update_name(client)
-                    await client.clear_channels(free_slots=2)
-                    await client.clear_blocked()
-                    try:
-                        to = await client.join_group(group_to.link)
-                    except ChannelPrivateError:
-                        continue
-                    except (InviteHashExpiredError, InviteHashInvalidError,
-                            ChannelInvalidError, IsBroadcastChannelError) as err:
-                        return await on_group_error(err, group_to)
-                    await relative_sleep(5)
-                    try:
-                        from_ = await client.join_group(group_from.link)
-                    except ChannelPrivateError:
-                        accounts.append(acc)
-                        continue
-                    except (InviteHashExpiredError, InviteHashInvalidError,
-                            ChannelInvalidError, IsBroadcastChannelError) as err:
-                        accounts.append(acc)
-                        return await on_group_error(err, group_from)
-                    users = await client.get_participants(from_)
-                    group_from.users_count = len(users)
-                    await group_from.save()
-                    for user in filter(user_valid, users):
-                        user_id = user.id
-                        if user_id in state.users_processed:
-                            continue
-                        try:
-                            # TODO: exception handling and checking if invite success
-                            res = await client.invite_to_group(user, to)
-                        # TODO: Check if all exceptions present
-                        except (ChannelInvalidError, ChatIdInvalidError, ChatInvalidError, PeerIdInvalidError,
-                                ChatWriteForbiddenError, ChatAdminRequiredError) as err:
-                            return await on_group_error(err, group_to)
-                        except (InputUserDeactivatedError, UserBannedInChannelError, UserChannelsTooMuchError,
-                                UserKickedError, UserPrivacyRestrictedError, UserIdInvalidError,
-                                UserNotMutualContactError, UserAlreadyParticipantError):
-                            pass
-                        except ChannelPrivateError:
-                            break
-                        except PeerFloodError:
-                            logger.info('Peer flood acc: %s', acc.invites_left)
-                            break
-                        else:
-                            await acc.incr_invites()
-                            state.added += 1
-                            if state.limit_reached:
-                                return
-                        state.users_processed.add(user_id)
-                        if not acc.can_invite:
-                            dt = datetime.datetime.now() + datetime.timedelta(days=settings.limit_reset)
-                            acc.invites_reset_at = dt
-                            await acc.save()
-                            break
-                        await relative_sleep(8)
-                    else:
-                        msg = '🔷 <i>{}</i> group has been processed.'.format(group_from.name)
-                        return msg
+        try:
+            async with TgClient(acc, store_session=False, proxy=settings.proxy) as client:
+                if not await client.is_user_authorized():
+                    logger.info('Account %s is not authenticated. Deleting from db.', acc.name)
+                    await acc.delete()
                     continue
-                except UserDeactivatedBanError:
-                    logger.info('Account %s has been banned. Deleting from db.', acc.name)
-            else:
-                logger.info('Account %s is not authenticated. Deleting from db.', acc.name)
+                await update_name(client)
+                await client.clear_channels(free_slots=2)
+                await client.clear_blocked()
+                try:
+                    to = await client.join_group(group_to.link)
+                except ChannelPrivateError:
+                    continue
+                except (InviteHashExpiredError, InviteHashInvalidError,
+                        ChannelInvalidError, IsBroadcastChannelError) as err:
+                    return await on_group_error(err, group_to)
+                await relative_sleep(5)
+                try:
+                    from_ = await client.join_group(group_from.link)
+                except ChannelPrivateError:
+                    accounts.append(acc)
+                    continue
+                except (InviteHashExpiredError, InviteHashInvalidError,
+                        ChannelInvalidError, IsBroadcastChannelError) as err:
+                    accounts.append(acc)
+                    return await on_group_error(err, group_from)
+                users = await client.get_participants(from_)
+                group_from.users_count = len(users)
+                await group_from.save()
+                for user in filter(user_valid, users):
+                    user_id = user.id
+                    if user_id in state.users_processed:
+                        continue
+                    try:
+                        # TODO: exception handling and checking if invite success
+                        res = await client.invite_to_group(user, to)
+                    # TODO: Check if all exceptions present
+                    except (ChannelInvalidError, ChatIdInvalidError, ChatInvalidError, PeerIdInvalidError,
+                            ChatAdminRequiredError) as err:
+                        return await on_group_error(err, group_to)
+                    except (InputUserDeactivatedError, UserBannedInChannelError, UserChannelsTooMuchError,
+                            UserKickedError, UserPrivacyRestrictedError, UserIdInvalidError,
+                            UserNotMutualContactError, UserAlreadyParticipantError):
+                        pass
+                    except (ChannelPrivateError, ChatWriteForbiddenError):
+                        break
+                    except PeerFloodError:
+                        await relative_sleep(20)
+                    else:
+                        await acc.incr_invites()
+                        state.added += 1
+                        if state.limit_reached:
+                            return
+                    state.users_processed.add(user_id)
+                    if not acc.can_invite:
+                        dt = datetime.datetime.now() + datetime.timedelta(days=settings.limit_reset)
+                        acc.invites_reset_at = dt
+                        await acc.save()
+                        break
+                    await relative_sleep(8)
+                else:
+                    msg = '🔷 <i>{}</i> group has been processed.'.format(group_from.name)
+                    return msg
+                end = time.time()
+                delay = settings.join_delay - (end - start)
+                if delay > 0:
+                    await relative_sleep(delay)
+        except AuthKeyDuplicatedError:
+            logger.info('Account %s cannot be used anymore.', acc.name)
+            # await client.save_session()
+        except UserDeactivatedBanError:
+            logger.info('Account %s has been banned. Deleting from db.', acc.name)
             await acc.delete()
-        end = time.time()
-        delay = settings.join_delay - (end - start)
-        if delay > 0:
-            await relative_sleep(delay)
 
 
 async def scrape(chat_id, queue: asyncio.Queue):
@@ -256,22 +249,24 @@ async def scrape(chat_id, queue: asyncio.Queue):
             if msg and msg not in logs:
                 logs.append(msg)
         if not tasks:
-            status = '☘ COMPLETED ☘'
+            status = '☘ Completed ☘'
         else:
-            status = 'ADDING_USERS'
-        msg = ('{status}   {loading}\n\n'
+            status = 'Running tasks'
+        msg = ('<b>{status}</b>\n\n'
+               'Tasks (groups): {tasks}\n'
                'Sessions: {accs_used}/{accs_total}\n'
                'Users processed: {processed}\n'
                'Users added: {added}\n\n'
-               'Logs\n'
-               '⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺\n'
-               '{logs}').format(
+               '{loading}\n\n'
+               '<i>Logs:</i>\n\n'
+               '{logs}\n').format(
             status=status,
-            loading=next(animation),
-            accs_used=len(accounts),
+            tasks=len(tasks),
+            accs_used=accs_loaded - len(accounts),
             accs_total=accs_loaded,
             processed=len(state.users_processed),
             added=state.added,
+            loading=next(animation),
             logs='\n'.join(logs)
         )
         if not message:
@@ -284,7 +279,8 @@ async def scrape(chat_id, queue: asyncio.Queue):
 
 
 def animation_frames():
-    frame = ['⏽', '❙', '┃', '❙', '⏽']
+    frame = '▂▃▄▅▆▇█▇▆▅▄▃▂▁'
+    frame = list(frame)
     while True:
         yield ''.join(frame)
         frame.insert(0, frame.pop())

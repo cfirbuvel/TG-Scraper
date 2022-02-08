@@ -94,7 +94,8 @@ class TgClient(TelegramClient):
     async def clear_channels(self, free_slots=1):
         dialogs = await self.get_dialogs()
         dialogs = list(filter(lambda x: x.is_channel, dialogs))
-        delete_num = len(dialogs) - 500 - free_slots
+        print('ACC {} LEN CHANNELS: '.format(self.account.name), len(dialogs))
+        delete_num = (len(dialogs) + free_slots) - 500
         delete_num = max(0, delete_num)
         dialogs.reverse()
         for dialog in dialogs[:delete_num]:
@@ -136,15 +137,6 @@ class TgClient(TelegramClient):
         session_string = self.session.save()
         self.account.session_string = session_string
         await self.account.save()
-
-    # async def __call__(self, request, ordered=False, flood_sleep_threshold=None):
-    #     try:
-    #         return await super().__call__(request, ordered, flood_sleep_threshold)
-    #     except UserDeactivatedBanError:
-    #         acc = self.account
-    #         logger.info('Account %s has been banned. Deleting from db.', acc.name)
-    #         await acc.delete()
-    #         raise
 
     async def _tear_down(self):
         if self.store_session:

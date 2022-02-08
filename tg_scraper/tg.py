@@ -8,7 +8,7 @@ from telethon.sessions.string import StringSession
 # from telethon.errors.rpcerrorlist import ChatInvalidError
 from telethon.tl.functions.contacts import GetBlockedRequest, UnblockRequest
 from telethon.tl.functions.channels import GetParticipantsRequest, DeleteChannelRequest, JoinChannelRequest, \
-    InviteToChannelRequest, GetParticipantRequest
+    InviteToChannelRequest, GetParticipantRequest, LeaveChannelRequest
 from telethon.tl.functions.messages import GetFullChatRequest, DeleteChatRequest, CheckChatInviteRequest, \
     ImportChatInviteRequest, AddChatUserRequest
 from telethon.tl.types import ChannelParticipantsSearch, ChatInviteAlready
@@ -91,24 +91,29 @@ class TgClient(TelegramClient):
             users = full_chat.users
         return users
 
-    async def clear_dialogs(self, free_slots=1):
+    async def clear_channels(self, free_slots=1):
         dialogs = await self.get_dialogs()
-        dialogs = list(filter(lambda x: x.is_group, dialogs))
+        dialogs = list(filter(lambda x: x.is_channel, dialogs))
         delete_num = len(dialogs) - 500 - free_slots
         delete_num = max(0, delete_num)
-        for i in range(delete_num):
-            await self.burn_dialog(dialogs[-i])
+        dialogs.reverse()
+        for dialog in dialogs[:delete_num]:
+            entity = dialog.entity
+            if entity.creator:
+                await self(DeleteChannelRequest(entity))
+            else:
+                await self(LeaveChannelRequest(entity))
             await relative_sleep(2.5)
 
-    async def burn_dialog(self, dialog):
-        entity = dialog.entity
-        if entity.creator:
-            if _entity_type(entity) == _EntityType.CHAT:
-                await self(DeleteChatRequest(entity.id))
-            else:
-                await self(DeleteChannelRequest(entity))
-        else:
-            await dialog.delete()
+    # async def burn_dialog(self, dialog):
+    #     entity = dialog.entity
+    #     if entity.creator:
+    #         if _entity_type(entity) == _EntityType.CHAT:
+    #             await self(DeleteChatRequest(entity.id))
+    #         else:
+    #             await self(DeleteChannelRequest(entity))
+    #     else:
+    #         await dialog.delete()
 
     async def clear_blocked(self):
         limit = 100

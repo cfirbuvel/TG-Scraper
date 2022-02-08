@@ -10,11 +10,9 @@ import re
 import time
 
 import aioitertools
-from aiogram.types import ParseMode
 from faker import Faker
 import more_itertools
 from telethon.errors.rpcerrorlist import *
-from telethon.helpers import _entity_type, _EntityType
 from telethon.tl.functions.account import UpdateProfileRequest
 from telethon.tl.functions.channels import InviteToChannelRequest, GetParticipantsRequest, JoinChannelRequest, \
     LeaveChannelRequest, DeleteChannelRequest, GetParticipantRequest
@@ -159,7 +157,7 @@ async def worker(accounts, group_to, group_from, state: RunState):
             if await client.is_user_authorized():
                 try:
                     await update_name(client)
-                    await client.clear_dialogs(free_slots=2)
+                    await client.clear_channels(free_slots=2)
                     await client.clear_blocked()
                     try:
                         to = await client.join_group(group_to.link)
@@ -248,9 +246,8 @@ async def scrape(chat_id, queue: asyncio.Queue):
     for group in sources:
         task = asyncio.create_task(worker(accounts, target, group, state), name=task_name)
         tasks.append(task)
+    animation = animation_frames()
     logs = []
-    loader_len = 48
-    animation = itertools.cycle('⠁⠃⠇⡇⡆⡄⡀')
     message = None
     while tasks:
         done, tasks = await asyncio.wait(tasks, timeout=1, return_when=asyncio.FIRST_COMPLETED)
@@ -260,36 +257,23 @@ async def scrape(chat_id, queue: asyncio.Queue):
                 logs.append(msg)
         if not tasks:
             status = '☘ COMPLETED ☘'
-            progress = loader_len
-            # reply_markup = None
         else:
             status = 'ADDING_USERS'
-            progress = max((state.added / state.limit), ((accs_loaded - len(accounts)) / accs_loaded))
-            progress = round(progress * loader_len)
-            # reply_markup = keyboards.stop_run()
-        msg = ('<pre>'
-               '⌌ {status} ⌍\n'
-               '{frame}{progress}{frame}\n'
-               '⌎{spaces}⌏\n\n'
-               'Details\n'
-               '{separator}\n'
-               '</pre>'
-               '{details}\n').format(
-            status=status.ljust(23, ' ') + f'[{state.added}]'.rjust(23, ' '),
-            frame=next(animation),
-            progress=('█' * progress).ljust(loader_len, '▁'),
-            spaces=' ' * loader_len,
-            separator='⎺' * (loader_len + 2),
-            details='\n'.join(logs)
+        msg = ('{status}   {loading}\n\n'
+               'Sessions: {accs_used}/{accs_total}\n'
+               'Users processed: {processed}\n'
+               'Users added: {added}\n\n'
+               'Logs\n'
+               '⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺⎺\n'
+               '{logs}').format(
+            status=status,
+            loading=next(animation),
+            accs_used=len(accounts),
+            accs_total=accs_loaded,
+            processed=len(state.users_processed),
+            added=state.added,
+            logs='\n'.join(logs)
         )
-        # msg = (f'<b>{status}</b>\n\n'
-        #        f'<i>{state.added} users added</i>\n'
-        #        f'<pre>'
-        #        f'⌌{"" : <40}⌍\n'
-        #        f'{frame}{"█" * progress :▁<40}{frame}\n'
-        #        f'⌎{"" : <40}⌏'
-        #        f'</pre>\n'
-        #        f'{details}')
         if not message:
             message = await bot.send_message(chat_id, msg)
         else:
@@ -300,15 +284,12 @@ async def scrape(chat_id, queue: asyncio.Queue):
 
 
 def animation_frames():
-    positions = itertools.cycle([4, 2, 0, 1, 3, 5])
-    base, paint = '◻◼'
-    frame = list(base * 6)
-    print(frame)
-    for i, pos in enumerate(positions, 1):
-        frame[pos] = paint
-        yield [''.join(chunk) for chunk in more_itertools.chunked(frame, 2)]
-        if i % 6 == 0:
-            base, paint = paint, base
+    frame = ['⏽', '❙', '┃', '❙', '⏽']
+    while True:
+        yield ''.join(frame)
+        frame.insert(0, frame.pop())
+
+
 # async def scrape_repeatedly(chat_id, queue: asyncio.Queue):
 #     interval = 86400
 #     bot = dispatcher.bot

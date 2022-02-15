@@ -126,7 +126,8 @@ async def on_group_error(error, group):
         raise error
     except InviteHashExpiredError:
         msg = 'Invite link has expired.'
-    except (InviteHashInvalidError, ChannelInvalidError, ChatIdInvalidError, ChatInvalidError, PeerIdInvalidError):
+    except (InviteHashInvalidError, ChannelInvalidError, ChatIdInvalidError,
+            ChatInvalidError, PeerIdInvalidError, ValueError):
         msg = 'Group doesn\'t exist or join link is not valid.'
     except (ChatWriteForbiddenError, ChatAdminRequiredError):
         msg = 'Adding users is not allowed.'
@@ -158,7 +159,7 @@ async def worker(accounts, group_to, group_from, state: RunState):
                 except ChannelPrivateError:
                     continue
                 except (InviteHashExpiredError, InviteHashInvalidError,
-                        ChannelInvalidError, IsBroadcastChannelError) as err:
+                        ChannelInvalidError, IsBroadcastChannelError, ValueError) as err:
                     return await on_group_error(err, group_to)
                 await relative_sleep(5)
                 try:
@@ -167,10 +168,13 @@ async def worker(accounts, group_to, group_from, state: RunState):
                     accounts.append(acc)
                     continue
                 except (InviteHashExpiredError, InviteHashInvalidError,
-                        ChannelInvalidError, IsBroadcastChannelError) as err:
+                        ChannelInvalidError, IsBroadcastChannelError, ValueError) as err:
                     accounts.append(acc)
                     return await on_group_error(err, group_from)
-                users = await client.get_participants(from_)
+                try:
+                    users = await client.get_participants(from_)
+                except (ChatAdminRequiredError) as err:
+                    return await on_group_error(err, from_)
                 group_from.users_count = len(users)
                 await group_from.save()
                 for user in filter(user_valid, users):

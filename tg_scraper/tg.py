@@ -44,7 +44,7 @@ class TgClient(TelegramClient):
                 pass
 
     async def join_group(self, link):
-        middle, end = link.split('/')[-2:]
+        middle, end = link.strip().split('/')[-2:]
         if middle.lower() == 'joinchat' or end.startswith('+'):
             link = end.lstrip('+')
             invite = await self(CheckChatInviteRequest(link))

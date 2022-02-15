@@ -156,7 +156,7 @@ async def worker(accounts, group_to, group_from, state: RunState):
                 await client.clear_blocked()
                 try:
                     to = await client.join_group(group_to.link)
-                except ChannelPrivateError:
+                except (ChannelPrivateError, UsernameInvalidError):
                     continue
                 except (InviteHashExpiredError, InviteHashInvalidError,
                         ChannelInvalidError, IsBroadcastChannelError, ValueError) as err:
@@ -164,7 +164,7 @@ async def worker(accounts, group_to, group_from, state: RunState):
                 await relative_sleep(5)
                 try:
                     from_ = await client.join_group(group_from.link)
-                except ChannelPrivateError:
+                except (ChannelPrivateError, UsernameInvalidError):
                     accounts.append(acc)
                     continue
                 except (InviteHashExpiredError, InviteHashInvalidError,

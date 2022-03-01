@@ -12,7 +12,7 @@ import time
 import aioitertools
 from faker import Faker
 import more_itertools
-from telethon import connection
+from telethon.network.connection import ConnectionTcpMTProxyRandomizedIntermediate
 from telethon.errors.rpcerrorlist import *
 from telethon.tl.functions.account import UpdateProfileRequest
 from telethon.tl.functions.channels import InviteToChannelRequest, GetParticipantsRequest, JoinChannelRequest, \
@@ -194,8 +194,9 @@ async def worker(accounts, group_to, group_from, state: RunState):
                         pass
                     except (ChannelPrivateError, ChatWriteForbiddenError):
                         break
-                    except PeerFloodError:
-                        await relative_sleep(20)
+                    except (PeerFloodError, FloodWaitError) as e:
+                        seconds = getattr(e, 'seconds', 20)
+                        await relative_sleep(seconds)
                     else:
                         await acc.incr_invites()
                         state.added += 1

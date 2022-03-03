@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 import zipfile
 
 from aiogram.dispatcher import FSMContext
-from aiogram.dispatcher.filters import ContentTypeFilter, Regexp
+from aiogram.dispatcher.filters import ContentTypeFilter, Regexp, Text
 from aiogram.types import Message, CallbackQuery
 from aiogram.types.message import ContentType
 from tortoise.expressions import F
@@ -221,9 +221,9 @@ async def account_detail_back(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@dispatcher.callback_query_handler(CallbackData('settings_menu', 'back'), state=(Menu.main, Settings.last_seen_filter,
-                                                                                 Settings.join_delay,
-                                                                                 Settings.run, None))
+@dispatcher.callback_query_handler(CallbackData('settings_menu', 'back'),
+                                   state=(Menu.main, Settings.last_seen_filter, Settings.join_delay,
+                                          Settings.run, Settings.add_sessions, None))
 async def on_settings(callback: CallbackQuery, state: FSMContext):
     await Settings.main.set()
     await callback.message.edit_text(settings.get_detail_msg(), reply_markup=keyboards.settings_menu())
@@ -332,61 +332,91 @@ async def on_join_delay_set(message: Message, state: FSMContext):
 @dispatcher.callback_query_handler(CallbackData('add_sessions'), state=Settings.main)
 async def add_sessions(callback: CallbackQuery, state: FSMContext):
     await Settings.add_sessions.set()
-    await callback.message.edit_text('Please upload <b>.zip</b> archive with session files.', reply_markup=keyboards.back())
+    msg = 'Please upload <b>.zip</b> archive with session files or <b>.session</b> file.'
+    await callback.message.edit_text(msg, reply_markup=keyboards.back())
     await callback.answer()
 
 
 # TODO: seems that file sessions are not cleared
 @dispatcher.message_handler(content_types=ContentType.DOCUMENT, state=Settings.add_sessions)
 async def add_sessions_upload(message: Message, state: FSMContext):
-    file = io.BytesIO()
-    await message.document.download(destination_file=file)
-    added = 0
-    try:
-        archive = zipfile.ZipFile(file)
-    except zipfile.BadZipfile:
-        await message.answer('🚫 Invalid file.\n'
-                             'Please upload solid <b>.zip</b> archive.')
+    api_id, api_hash = settings.default_api_id, settings.default_api_hash
+    if not api_id or not api_hash:
+        msg = '🚫 Please add <b>default_api_id</b> and <b>default_api_hash</b> to the config file.'
+        await message.reply(msg)
         return
-    await Settings.main.set()
-    dirname = 'temp/{}'.format(message.chat.id)
-    message = await message.answer('Creating accounts from sessions')
-    task = asyncio.create_task(tasks.show_loading(message))
-    if os.path.isdir(dirname):
-        shutil.rmtree(dirname)
-    os.makedirs(dirname, exist_ok=True)
-    archive.extractall(path=dirname)
-    sessions = defaultdict(dict)
-    for dirpath, dirnames, filenames in os.walk(dirname):
-        for filename in filenames:
-            filepath = os.path.join(dirpath, filename)
-            session_id, ext = os.path.splitext(filename)
-            if ext == '.json':
-                with open(filepath) as f:
-                    data = json.load(f)
-                name = ' '.join(filter(None, (data['first_name'], data['last_name']))).strip() or data['username'] or session_id
-                data = {
-                    'phone': data['phone'], 'api_id': data['app_id'],
-                    'api_hash': data['app_hash'], 'name': name
-                }
-                sessions[session_id].update(data)
-            elif ext == '.session':
-                sessions[session_id]['session_string'] = await session_db_to_string(os.path.join(dirpath, filename))
-    shutil.rmtree(dirname)
-    invites_limit = settings.invites_limit
-    for data in sessions.values():
-        if len(data) == 5:
-            data['auto_created'] = True
+    document = message.document
+    phone, ext = os.path.splitext(document.file_name)
+    # print('FILE NAME: {}'.format(file_name))
+    if ext in ('.zip', '.session'):
+        dirname = 'temp/{}'.format(message.chat.id)
+        if os.path.isdir(dirname):
+            shutil.rmtree(dirname)
+        os.makedirs(dirname, exist_ok=True)
+        if ext == '.zip':
+            file = io.BytesIO()
+            await message.document.download(destination_file=file)
             try:
-                await Account.get(**data)
-            except DoesNotExist:
-                acc = Account(**data)
-                acc.invites_max = random.randint(*invites_limit)
-                await acc.save()
-                added += 1
-    task.cancel()
-    await message.edit_text('Sessions have been users_processed <i>({} accounts created)</i>.'.format(added))
-    await message.answer(settings.get_detail_msg(), reply_markup=keyboards.settings_menu())
+                archive = zipfile.ZipFile(file)
+            except zipfile.BadZipfile:
+                msg = '🚫 Invalid file.\nPlease upload solid <b>.zip</b> archive.'
+                await message.reply(msg, reply_markup=keyboards.back())
+                return
+            message = await message.answer('Creating accounts from sessions')
+            task = asyncio.create_task(tasks.show_loading(message))
+            archive.extractall(path=dirname)
+            sessions = {}
+            added = 0
+            for dirpath, dirnames, filenames in os.walk(dirname):
+                for filename in filenames:
+                    phone, ext = os.path.splitext(filename)
+                    if ext == '.session':
+                        sessions[phone] = await session_db_to_string(os.path.join(dirpath, filename))
+            invites_limit = settings.invites_limit
+            for phone, session in sessions.items():
+                invites_max = random.randint(*invites_limit)
+                defaults = {
+                    'api_id': api_id, 'api_hash': api_hash, 'name': phone,
+                    'session_string': session, 'invites_max': invites_max, 'auto_created': True
+                }
+                _, created = await Account.get_or_create(defaults=defaults, phone=phone)
+                if created:
+                    added += 1
+            task.cancel()
+            msg = 'Sessions have been processed <i>({} accounts created)</i>.'.format(added)
+            await message.edit_text(msg)
+        elif ext == '.session':
+            if await Account.filter(phone=phone).exists():
+                msg = '🚫 This account already exists. Please upload another file.'
+                await message.reply(msg, reply_markup=keyboards.back())
+                return
+            else:
+                file_path = os.path.join(dirname, document.file_name)
+                await document.download(destination_file=file_path)
+                session = await session_db_to_string(file_path)
+                invites_max = random.randint(*settings.invites_limit)
+                await Account.create(
+                    api_id=api_id,
+                    api_hash=api_hash,
+                    name=phone,
+                    phone=phone,
+                    session_string=session,
+                    invites_max=invites_max,
+                    auto_created=True,
+                )
+                msg = 'Account has been created.'
+                await message.reply(msg)
+        shutil.rmtree(dirname)
+        await Settings.main.set()
+        await message.answer(settings.get_detail_msg(), reply_markup=keyboards.settings_menu())
+    else:
+        msg = '🚫 Unsupported file format. Valid are: <b>.session</b>, <b>.zip</b>.'
+        await message.reply(msg, reply_markup=keyboards.back())
+
+
+# @dispatcher.callback_query_handler(Text('back'), state=Settings.add_sessions)
+# async def on_back_to_settings():
+#     pass
 
 
 @dispatcher.callback_query_handler(CallbackData('scrape'), state=(Menu.main, None))

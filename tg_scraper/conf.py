@@ -28,6 +28,14 @@ class Settings:
             self.config.write(f)
 
     @property
+    def default_api_id(self):
+        return self.config.getint(self.section, 'default_api_id', fallback=None)
+
+    @property
+    def default_api_hash(self):
+        return self.config.get(self.section, 'default_api_hash', fallback=None)
+
+    @property
     def last_seen_filter(self):
         return self.config.getint(self.section, 'last_seen_filter', fallback=0)
 

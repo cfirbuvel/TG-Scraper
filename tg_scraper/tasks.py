@@ -173,7 +173,7 @@ async def worker(accounts, group_to, group_from, state: RunState):
                     return await on_group_error(err, group_from)
                 try:
                     users = await client.get_participants(from_)
-                except (ChatAdminRequiredError) as err:
+                except (ChatAdminRequiredError, GetParticipantRequest, ValueError) as err:
                     return await on_group_error(err, from_)
                 group_from.users_count = len(users)
                 await group_from.save()
@@ -284,7 +284,7 @@ async def scrape(chat_id, queue: asyncio.Queue):
 
 
 def animation_frames():
-    frame = '▂▃▄▅▆▇█▇▆▅▄▃▂▁'
+    frame = '▂▂▃▃▄▄▅▅▆▆▇▇██▇▇▆▆▅▅▄▄▃▃▂▂▁▁'
     frame = list(frame)
     while True:
         yield ''.join(frame)

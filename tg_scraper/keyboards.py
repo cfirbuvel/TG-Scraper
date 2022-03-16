@@ -4,7 +4,7 @@ import operator
 
 from aiogram.types.inline_keyboard import InlineKeyboardButton, InlineKeyboardMarkup
 
-from .conf import LastSeenEnum, Settings
+from .conf import LastSeenEnum
 
 
 PAGE_SIZE = 25
@@ -27,6 +27,7 @@ def main_menu():
     return [
         [{'text': '🤖 Add account', 'callback_data': 'add_acc'}],
         [{'text': '🗂 Accounts', 'callback_data': 'accounts'}],
+        [{'text': '🔗 Groups', 'callback_data': 'groups'}],
         [{'text': '⚙️ Settings', 'callback_data': 'settings_menu'}],
         [{'text': '💥 Scrape', 'callback_data': 'scrape'}],
     ]
@@ -42,14 +43,14 @@ def back():
 @inline_markup
 def cancel_back():
     return [
-        [{'text': '❌ Cancel', 'callback_data': 'to_menu'}, {'text': '↩ Back', 'callback_data': 'back'}],
+        [{'text': '❌ Cancel', 'callback_data': 'cancel'}, {'text': '↩ Back', 'callback_data': 'step_back'}],
     ]
 
 
 @inline_markup
 def yes_no():
     return [
-        [{'text': '✖️ No', 'callback_data': 'no'}, {'text': '✔️ Yes', 'callback_data': 'yes'}]
+        [{'text': '✔️ Yes', 'callback_data': 'yes'}, {'text': '✖️ No', 'callback_data': 'no'}]
     ]
 
 
@@ -99,11 +100,16 @@ def account_detail():
 
 
 @inline_markup
-def settings_menu():
+def settings_menu(settings):
+    proxy_text = '👤 Use proxy  {}'.format('☑' if settings.enable_proxy else '◻')
     return [
-        [{'text': '🎛 Run', 'callback_data': 'run'}],
-        [{'text': '🚷 Last seen filter', 'callback_data': 'last_seen_filter'}],
+        # [{'text': '🎛 Run', 'callback_data': 'run'}],
+        [{'text': '🆔 Api configs', 'callback_data': 'api_configs'}],
+        [{'text': '🚷 Last seen filter', 'callback_data': 'last_seen'}],
         [{'text': '⏱ Group join delay', 'callback_data': 'join_delay'}],
+        [{'text': '🎚 Invites limit', 'callback_data': 'invites'}],
+        [{'text': '⌛ Limit reset', 'callback_data': 'reset'}],
+        [{'text': proxy_text, 'callback_data': 'proxy_toggle'}],
         [{'text': '💾 Add sessions', 'callback_data': 'add_sessions'}],
         [{'text': '↩ Back', 'callback_data': 'to_menu'}]
     ]
@@ -121,13 +127,12 @@ def run_settings():
 
 
 @inline_markup
-def last_seen_filter():
+def last_seen_filter(settings):
     markup = []
-    settings = Settings()
     for status in LastSeenEnum:
         text = status.verbose_name
         val = status.value
-        if val == settings.last_seen_filter:
+        if val == settings.last_seen:
             text += '  💚'
         markup.append([{'text': text, 'callback_data': str(val)}])
     markup.append([{'text': '↩ Back', 'callback_data': 'settings_menu'}])
@@ -137,10 +142,9 @@ def last_seen_filter():
 @inline_markup
 def scrape_menu():
     return [
-        [{'text': '🔗 Groups', 'callback_data': 'groups'}],
         [{'text': '✈ Run', 'callback_data': 'start'}],
         # [{'text': '🔁 Run every 24 hours', 'callback_data': 'repeatedly'}],
-        [{'text': '↩ Back', 'callback_data': 'to_menu'}],
+        [{'text': '↩ Back', 'callback_data': 'back'}],
     ]
 
 
@@ -149,7 +153,7 @@ def groups():
     return [
         [{'text': '📝 Add', 'callback_data': 'add'}],
         [{'text': '💾 Groups', 'callback_data': 'list'}],
-        [{'text': '↩ Back', 'callback_data': 'back'}],
+        [{'text': '↩ Back', 'callback_data': 'to_menu'}],
     ]
 
 
@@ -159,6 +163,24 @@ def groups_list(groups, page=1):
     rows = general_list(items, page)
     rows.append([{'text': '↩ Back', 'callback_data': 'back'}])
     return rows
+
+
+@inline_markup
+def api_configs(items, page=1):
+    items = [(item.id, item.api_id) for item in items]
+    rows = general_list(items, page)
+    rows.append([{'text': '📝 Add new', 'callback_data': 'add'}])
+    rows.append([{'text': '↩ Back', 'callback_data': 'back'}])
+    return rows
+
+
+@inline_markup
+def api_config_detail():
+    return [
+        [{'text': '📡 Verify', 'callback_data': 'verify'}],
+        [{'text': '🗑 Delete', 'callback_data': 'delete'}],
+        [{'text': '↩ Back', 'callback_data': 'back'}]
+    ]
 
 
 @inline_markup
@@ -186,6 +208,7 @@ def max_btn(val):
         [{'text': '📶 Max', 'callback_data': str(val)}]
     ]
 
+
 @inline_markup
 def stop_run():
     return [
@@ -195,7 +218,7 @@ def stop_run():
 
 
 # @inline_markup
-# def groups_list(items, page=1):
+# def list(items, page=1):
 #     rows = general_list(items, page)
 #     return rows
 #

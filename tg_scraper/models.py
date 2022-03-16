@@ -7,8 +7,54 @@ from tortoise import fields, Tortoise
 from tortoise.models import Model
 
 
+class Settings(Model):
+    # api_id = fields.IntField(null=True)
+    # api_hash = fields.CharField(max_length=50, null=True)
+    last_seen = fields.IntField(default=0)
+    join_delay = fields.IntField(default=60)
+    invite_limit = fields.IntField(default=30)
+    limit_reset_days = fields.IntField(default=30)
+    enable_proxy = fields.BooleanField(default=True)
+
+    def __str__(self):
+        # api_id = self.api_id or 'Not set'
+        # api_hash = self.api_hash or 'Not set'
+        last_seen = self.last_seen or 'Any'
+        return (f'⚙  Settings\n\n'
+                # f'Api id: <code>{api_id}</code>\n'
+                # f'Api hash: <code>{api_hash}</code>\n'
+                f'Max last seen days: <code>{last_seen}</code>\n'
+                f'Join delay: <code>{self.join_delay}</code> seconds\n'
+                f'Session invite limit: <code>{self.invite_limit}</code>\n'
+                f'Limit resets after: <code>{self.limit_reset_days}</code> days')
+        # self.api_id or 'Not set'
+
+    def get_relative_invite_limit(self):
+        low = max(0, self.invite_limit - 5)
+        high = min(50, self.invite_limit + 5)
+        return random.randint(low, high)
+
+
+class ApiConfig(Model):
+    api_id = fields.IntField()
+    hash = fields.CharField(max_length=50)
+    active = fields.BooleanField(default=False)
+
+    def __str__(self):
+        verified = 'Yes ✅' if self.active else 'No ❌'
+        return (f'Api id: <code>{self.api_id}</code>\n'
+                f'Api hash: <code>{self.hash}</code>\n'
+                f'Verified: {verified}')
+
+
+class Proxy(Model):
+    address = fields.CharField(max_length=2048)
+    port = fields.IntField()
+    username = fields.CharField(max_length=128)
+    passwd = fields.CharField(max_length=64)
+
+
 class Account(Model):
-    id = fields.IntField(pk=True)
     api_id = fields.IntField()
     api_hash = fields.CharField(max_length=128)
     phone = fields.CharField(max_length=20, unique=True)
@@ -64,7 +110,6 @@ class Account(Model):
 
 
 class Group(Model):
-    id = fields.IntField(pk=True)
     name = fields.CharField(max_length=128, null=True)
     link = fields.CharField(max_length=2048)
     users_count = fields.IntField(null=True)
@@ -106,3 +151,5 @@ async def init_db():
         modules={'models': ['tg_scraper.models']}
     )
     await Tortoise.generate_schemas()
+    if not await Settings.exists():
+        await Settings.create()

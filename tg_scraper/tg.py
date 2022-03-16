@@ -15,9 +15,6 @@ from telethon.tl.types import ChannelParticipantsSearch, ChatInviteAlready
 from tortoise.exceptions import DoesNotExist
 # from telethon.utils
 
-from . import keyboards
-from .bot import dispatcher
-from .states import Scrape
 from .utils import relative_sleep, is_channel
 
 

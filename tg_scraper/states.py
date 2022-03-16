@@ -5,6 +5,13 @@ class Menu(StatesGroup):
     main = State()
 
 
+class Groups(StatesGroup):
+    main = State()
+    add = State()
+    list = State()
+    detail = State()
+
+
 class AddAccount(StatesGroup):
     phone = State()
     api_id = State()
@@ -20,30 +27,27 @@ class Accounts(StatesGroup):
 
 class Settings(StatesGroup):
     main = State()
-    run = State()
     invites_limit = State()
     limit_reset = State()
-    last_seen_filter = State()
+    last_seen = State()
     join_delay = State()
     add_sessions = State()
 
 
+class ApiConf(StatesGroup):
+    main = State()
+    detail = State()
+    delete = State()
+    enter_id = State()
+    enter_hash = State()
+
+
 class Scrape(StatesGroup):
     main = State()
-    groups = State()
-    add_group = State()
-    groups_list = State()
-    group_detail = State()
     task_running = State()
-
-    # target_group_link = State()
     add_limit = State()
-
     enter_code = State()
     resend_code = State()
-
     select_group = State()
     select_multiple_groups = State()
-    # group_from = State()
-    # group_to = State()
 

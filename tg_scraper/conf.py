@@ -28,20 +28,28 @@ class Settings:
             self.config.write(f)
 
     @property
-    def default_api_id(self):
-        return self.config.getint(self.section, 'default_api_id', fallback=None)
+    def api_id(self):
+        return self.config.getint(self.section, 'api_id', fallback=None)
 
     @property
-    def default_api_hash(self):
-        return self.config.get(self.section, 'default_api_hash', fallback=None)
+    def api_hash(self):
+        return self.config.get(self.section, 'api_hash', fallback=None)
+
+    @api_id.setter
+    def api_id(self, val):
+        self.save_val('api_id', str(val))
+
+    @api_hash.setter
+    def api_hash(self, val):
+        self.save_val('api_hash', val)
 
     @property
     def last_seen_filter(self):
-        return self.config.getint(self.section, 'last_seen_filter', fallback=0)
+        return self.config.getint(self.section, 'last_seen', fallback=0)
 
     @last_seen_filter.setter
     def last_seen_filter(self, val):
-        self.save_val('last_seen_filter', str(val))
+        self.save_val('last_seen', str(val))
 
     @property
     def join_delay(self):
@@ -81,15 +89,24 @@ class Settings:
         self.save_val('skip_sign_in', val)
 
     @property
-    def proxy(self):
-        section = 'proxy'
-        return {
-            'proxy_type': self.config.get(section, 'type', fallback='http'),
-            'addr': self.config.get(section, 'address'),
-            'port': self.config.getint(section, 'port'),
-            'username': self.config.get(section, 'username'),
-            'password': self.config.get(section, 'password')
-        }
+    def proxy_enabled(self):
+        return self.config.get(self.section, 'proxy_enabled')
+
+    @property
+    def proxy_file(self):
+        return self.config.get(self.section, 'proxy_file')
+
+
+    # @property
+    # def proxy(self):
+    #     section = 'proxy'
+    #     return {
+    #         'proxy_type': self.config.get(section, 'type', fallback='http'),
+    #         'addr': self.config.get(section, 'address'),
+    #         'port': self.config.getint(section, 'port'),
+    #         'username': self.config.get(section, 'username'),
+    #         'password': self.config.get(section, 'password')
+    #     }
 
     def get_detail_msg(self):
         return ('⚙  Settings\n\n'

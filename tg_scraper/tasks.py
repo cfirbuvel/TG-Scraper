@@ -134,13 +134,14 @@ async def worker(accounts, group_to, group_from, state: RunState):
     while accounts:
         acc = accounts.pop(0)
         start = time.time()
+        # TODO: Fix algo
         if use_proxy:
             i = (proxy_count // 5) % len(proxies)
             proxy = proxies[i]
         else:
             proxy = None
+        print(proxy)
         try:
-            print(proxy)
             async with TgClient(acc, store_session=False, proxy=proxy) as client:
                 if not await client.is_user_authorized():
                     logger.info('Account %s is not authenticated. Deleting from db.', acc.name)
@@ -272,9 +273,9 @@ async def scrape(chat_id, queue: asyncio.Queue):
             logs='\n'.join(logs)
         )
         if not message:
-            message = await bot.send_message(chat_id, msg)
+            message = await bot.send_message(chat_id, msg, disable_web_page_preview=True)
         else:
-            message = await message.edit_text(msg)
+            message = await message.edit_text(msg, disable_web_page_preview=True)
     await states.Menu.main.set()
     await bot.send_message(chat_id, 'Main', reply_markup=keyboards.main_menu())
     # TODO: Cancel handler with message

@@ -77,6 +77,7 @@ def get_proxies():
                     'username': username,
                     'password': passwd
                 }
+                print(proxy)
                 res.append(proxy)
     return res
 

@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import itertools
 import logging
 import time
 
@@ -124,31 +125,18 @@ async def on_group_error(error, group):
     return msg
 
 
-async def worker(accounts, group_to, group_from, state: RunState):
+async def worker(accounts, group_to, group_from, state: RunState, settings):
     # TODO: MAke sure settings refresh if changed when task running
-    settings = await Settings.get()
-    use_proxy = settings.enable_proxy
-    if use_proxy:
-        proxies = get_proxies()
-        proxy_count = 0
     while accounts:
-        acc = accounts.pop(0)
+        acc, proxy = accounts.pop(0)
         start = time.time()
         # TODO: Fix algo
-        if use_proxy:
-            i = (proxy_count // 5) % len(proxies)
-            proxy = proxies[i]
-        else:
-            proxy = None
-        print(proxy)
         try:
             async with TgClient(acc, store_session=False, proxy=proxy) as client:
                 if not await client.is_user_authorized():
                     logger.info('Account %s is not authenticated. Deleting from db.', acc.name)
                     await acc.delete()
                     continue
-                print(proxy)
-                proxy_count += 1
                 await update_name(client)
                 await client.clear_channels(free_slots=2)
                 await client.clear_blocked()
@@ -163,11 +151,11 @@ async def worker(accounts, group_to, group_from, state: RunState):
                 try:
                     from_ = await client.join_group(group_from.link)
                 except (ChannelPrivateError, UsernameInvalidError):
-                    accounts.append(acc)
+                    accounts.append((acc, proxy))
                     continue
                 except (InviteHashExpiredError, InviteHashInvalidError,
                         ChannelInvalidError, IsBroadcastChannelError, ValueError) as err:
-                    accounts.append(acc)
+                    accounts.append((acc, proxy))
                     return await on_group_error(err, group_from)
                 try:
                     users = await client.get_participants(from_)
@@ -196,6 +184,7 @@ async def worker(accounts, group_to, group_from, state: RunState):
                         seconds = getattr(e, 'seconds', 20)
                         await relative_sleep(seconds)
                     else:
+                        # TODO: implement proxy reused
                         await acc.incr_invites()
                         state.added += 1
                         if state.limit_reached:
@@ -225,22 +214,27 @@ async def worker(accounts, group_to, group_from, state: RunState):
 async def scrape(chat_id, queue: asyncio.Queue):
     bot = dispatcher.bot
     await bot.send_message(chat_id, 'Task started. You can stop it at any moment with /stop command.')
+    settings = await Settings.get()
     accounts = list(await Account.filter(auto_created=True, invites_sent__lt=F('invites_max')))
-    max_invites = sum(acc.invites_left for acc in accounts)
+    if settings.enable_proxy:
+        proxies = get_proxies()
+        accounts = list(zip(accounts, proxies))
+    print(accounts)
+    max_invites = sum(acc.invites_left for acc, proxy in accounts)
+    accs_loaded = len(accounts)
     await states.Scrape.add_limit.set()
     msg = 'Please enter max number of users to add, <b>{} max</b>.'.format(max_invites)
     await bot.send_message(chat_id, msg, reply_markup=keyboards.max_btn(max_invites))
     limit = await queue.get()
     queue.task_done()
     limit = min(max_invites, limit)
-    accs_loaded = len(accounts)
     target = await Group.get(is_target=True)
     sources = await Group.filter(enabled=True, is_target=False)
     state = RunState(limit)
     tasks = []
     task_name = str(chat_id)
     for group in sources:
-        task = asyncio.create_task(worker(accounts, target, group, state), name=task_name)
+        task = asyncio.create_task(worker(accounts, target, group, state, settings), name=task_name)
         tasks.append(task)
     animation = animation_frames()
     logs = []

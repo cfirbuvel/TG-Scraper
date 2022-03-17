@@ -594,6 +594,7 @@ async def on_join_delay_set(message: Message, state: FSMContext):
 
 @dispatcher.callback_query_handler(Text('proxy_toggle'), state=states.Settings.main)
 async def on_proxy_toggle(callback: CallbackQuery, state: FSMContext):
+    # TODO: add proxy list in menu, add verifying that proxies exist
     settings = await Settings.get()
     settings.enable_proxy = not settings.enable_proxy
     await settings.save()

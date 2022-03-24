@@ -34,7 +34,19 @@ logger = logging.getLogger(__name__)
 
 async def to_main_menu(message, callback_query=None, callback_answer=None, edit=False):
     await states.Menu.main.set()
-    params = {'text': 'Main', 'reply_markup': keyboards.main_menu()}
+    text = f"""
+    ╔╦╗╔═╗
+   ║   ║   ╦            version : 2.1
+   ╩   ╚═╝
+╔═╗┌─┐┬─┐┌─┐┌─┐┌─┐┬─┐
+╚═╗│      ├┬┘├─┤├─┘├┤   ├┬┘
+╚═╝└─┘┴└─┴   ┴┴      └─┘┴└─
+
+Powered by:\n
+TG_Overdose
+            """
+
+    params = {'text': text, 'reply_markup': keyboards.main_menu()}
     if edit:
         await message.edit_text(**params)
     else:

@@ -128,11 +128,11 @@ async def on_group_error(error, group):
 async def worker(accounts, group_to, group_from, state: RunState, settings):
     # TODO: MAke sure settings refresh if changed when task running
     while accounts:
-        acc, proxy = accounts.pop(0)
+        acc = accounts.pop(0)
         start = time.time()
         # TODO: Fix algo
         try:
-            async with TgClient(acc, store_session=False, proxy=proxy) as client:
+            async with TgClient(acc, store_session=False) as client:
                 if not await client.is_user_authorized():
                     logger.info('Account %s is not authenticated. Deleting from db.', acc.name)
                     await acc.delete()
@@ -151,11 +151,11 @@ async def worker(accounts, group_to, group_from, state: RunState, settings):
                 try:
                     from_ = await client.join_group(group_from.link)
                 except (ChannelPrivateError, UsernameInvalidError):
-                    accounts.append((acc, proxy))
+                    accounts.append(acc)
                     continue
                 except (InviteHashExpiredError, InviteHashInvalidError,
                         ChannelInvalidError, IsBroadcastChannelError, ValueError) as err:
-                    accounts.append((acc, proxy))
+                    accounts.append(acc)
                     return await on_group_error(err, group_from)
                 try:
                     users = await client.get_participants(from_)
@@ -216,11 +216,7 @@ async def scrape(chat_id, queue: asyncio.Queue):
     await bot.send_message(chat_id, 'Task started. You can stop it at any moment with /stop command.')
     settings = await Settings.get()
     accounts = list(await Account.filter(auto_created=True, invites_sent__lt=F('invites_max')))
-    if settings.enable_proxy:
-        proxies = get_proxies()
-        accounts = list(zip(accounts, proxies))
-    print(accounts)
-    max_invites = sum(acc.invites_left for acc, proxy in accounts)
+    max_invites = sum(acc.invites_left for acc in accounts)
     accs_loaded = len(accounts)
     await states.Scrape.add_limit.set()
     msg = 'Please enter max number of users to add, <b>{} max</b>.'.format(max_invites)

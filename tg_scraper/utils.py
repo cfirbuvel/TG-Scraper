@@ -6,11 +6,12 @@ import re
 
 import aiosqlite
 from aiogram.utils.markdown import quote_html
+from python_socks import ProxyType
 from telethon.helpers import _entity_type, _EntityType
 from telethon.sessions.string import StringSession
 from telethon.crypto import AuthKey
 
-from .models import Account
+from .models import Settings, Account
 
 
 logger = logging.getLogger(__name__)
@@ -56,33 +57,31 @@ async def session_db_to_string(path):
             return obj.save()
 
 
-async def update_accounts_limits():
-    await Account.filter(invites_reset_at__gte=datetime.datetime.now()).update(invites_sent=0)
+async def get_proxy():
+    # res = []
+    # with open('proxies.txt') as f:
+    #     for line in f:
+    #         line = line.strip()
+    #         if line:
+    #             url, creds = line.split(' ')
+    #             addr, port = url.rsplit(':', 1)
+    #             addr = addr.split('://')[-1]
+    #             username, passwd = creds.rsplit(':', 1)
+    #             proxy = {
+    #                 'proxy_type': 'http',
+    #                 'addr': addr,
+    #                 'port': port,
+    #                 'username': username,
+    #                 'password': passwd
+    #             }
+    #             print(proxy)
+    #             res.append(proxy)
+    # return res
+    settings = await Settings.get_cached()
+    if settings.enable_proxy:
+        return {
+            'proxy_type': ProxyType.SOCKS5,
+            'addr': '127.0.0.1',
+            'port': 9050,
+        }
 
-
-def get_proxies():
-    res = []
-    with open('proxies.txt') as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                url, creds = line.split(' ')
-                addr, port = url.rsplit(':', 1)
-                addr = addr.split('://')[-1]
-                username, passwd = creds.rsplit(':', 1)
-                proxy = {
-                    'proxy_type': 'http',
-                    'addr': addr,
-                    'port': port,
-                    'username': username,
-                    'password': passwd
-                }
-                print(proxy)
-                res.append(proxy)
-    return res
-
-
-class Queue(asyncio.Queue):
-
-    def __deepcopy__(self, memo={}):
-        return self

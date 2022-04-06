@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import functools
 from collections import defaultdict
 import io
@@ -25,8 +26,8 @@ import validators
 from . import tasks, keyboards, states
 from .bot import dispatcher
 from .filters import CallbackData
-from .models import Account, Group, Settings, ApiConfig, Proxy
-from .utils import Queue, task_running, session_db_to_string, update_accounts_limits
+from .models import Account, Group, Settings, ApiConfig
+from .utils import task_running, session_db_to_string
 
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,16 @@ async def to_main_menu(message, callback_query=None, callback_answer=None, edit=
     if callback_query:
         await callback_query.answer(text=callback_answer)
 
+async def enter_settings(update):
+    await states.Settings.main.set()
+    settings = await Settings.get()
+    msg = str(settings)
+    reply_markup = await keyboards.settings_menu()
+    if type(update) == Message:
+        await update.answer(msg, reply_markup=reply_markup)
+    else:
+        await update.message.edit_text(msg, reply_markup=reply_markup)
+        await update.answer()
 
 @dispatcher.message_handler(commands=['start'], state='*')
 async def start(message: Message):
@@ -348,10 +359,7 @@ async def on_group_delete(callback: CallbackQuery, state: FSMContext):
         states.Settings.add_sessions, states.Scrape.main,  None
 ))
 async def on_settings(callback: CallbackQuery, state: FSMContext):
-    await states.Settings.main.set()
-    settings = await Settings.get()
-    await callback.message.edit_text(str(settings), reply_markup=keyboards.settings_menu(settings))
-    await callback.answer()
+    await enter_settings(callback)
 
 
 @dispatcher.callback_query_handler(Text(['api_configs', 'back', 'cancel']), state=(
@@ -487,14 +495,13 @@ async def on_invites_limit(callback: CallbackQuery, state: FSMContext):
     settings = await Settings.get()
     msg = ('Current limit: <b>{}</b>\n'
            'Enter number of users one account can invite (50 max).\n'
-           '+-5 value will be set to accounts.').format(settings.invite_limit)
+           '+-5 value will be set to accounts.').format(settings.invites_limit)
     await callback.message.edit_text(msg, reply_markup=keyboards.back())
     await callback.answer()
 
 
 @dispatcher.message_handler(state=states.Settings.invites_limit)
 async def on_invites_limit_set(message: Message, state: FSMContext):
-    await states.Settings.main.set()
     try:
         limit = int(message.text.strip())
     except ValueError:
@@ -503,14 +510,14 @@ async def on_invites_limit_set(message: Message, state: FSMContext):
     else:
         limit = min(50, abs(limit))
         settings = await Settings.get()
-        if limit != settings.invite_limit:
-            settings.invite_limit = limit
+        if limit != settings.invites_limit:
+            settings.invites_limit = limit
             await settings.save()
             await message.reply('Updating accounts with new limits.')
             for acc in await Account.all():
                 acc.invites_max = settings.get_relative_invite_limit()
                 await acc.save()
-            await message.answer(str(settings), reply_markup=keyboards.settings_menu(settings))
+        await enter_settings(message)
 
 
 @dispatcher.callback_query_handler(Text('reset'), state=states.Settings.main)
@@ -518,14 +525,13 @@ async def on_invites_reset(callback: CallbackQuery, state: FSMContext):
     await states.Settings.limit_reset.set()
     settings = await Settings.get()
     msg = ('Enter number of days passed before resetting limit (between 1 and 180).\n'
-           '<i>Current number: {}</i>').format(settings.limit_reset_days)
+           '<i>Current number: {}</i>').format(settings.invites_timeframe)
     await callback.message.edit_text(msg, reply_markup=keyboards.back())
     await callback.answer()
 
 
 @dispatcher.message_handler(state=states.Settings.limit_reset)
 async def on_invites_reset_set(message: Message, state: FSMContext):
-    await states.Settings.main.set()
     try:
         value = int(message.text.strip())
     except ValueError:
@@ -534,10 +540,9 @@ async def on_invites_reset_set(message: Message, state: FSMContext):
     else:
         value = min(abs(value), 180)
         settings = await Settings.get()
-        settings.limit_reset_days = value
+        settings.invites_timeframe = value
         await settings.save()
-        await message.answer(str(settings), reply_markup=keyboards.settings_menu(settings))
-
+        await enter_settings(message)
 
 # @dispatcher.callback_query_handler(CallbackData('skip_sign_in'), state=Settings.run)
 # async def on_skip_sign_in_toggle(callback: CallbackQuery, state: FSMContext):
@@ -567,20 +572,19 @@ async def on_last_seen_filter_set(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@dispatcher.callback_query_handler(Text('join_delay'), state=states.Settings.main)
+@dispatcher.callback_query_handler(Text('group_join_interval'), state=states.Settings.main)
 async def on_join_delay(callback: CallbackQuery, state: FSMContext):
     await states.Settings.join_delay.set()
     settings = await Settings.get()
     msg = ('Enter interval for joining a group in seconds.\n'
            '<i>(Small random offset will be added)</i>\n\n'
-           'Current value: <b>{}</b> seconds.').format(settings.join_delay)
+           'Current value: <b>{}</b> seconds.').format(settings.group_join_interval)
     await callback.message.edit_text(msg, reply_markup=keyboards.back())
     await callback.answer()
 
 
 @dispatcher.message_handler(state=states.Settings.join_delay)
 async def on_join_delay_set(message: Message, state: FSMContext):
-    await states.Settings.main.set()
     try:
         value = int(message.text.strip())
     except ValueError:
@@ -588,8 +592,9 @@ async def on_join_delay_set(message: Message, state: FSMContext):
         await message.reply(msg, reply_markup=keyboards.back())
     else:
         settings = await Settings.get()
-        settings.join_delay = value
-        await message.answer(str(settings), reply_markup=keyboards.settings_menu(settings))
+        settings.group_join_interval = value
+        await settings.save()
+        await enter_settings(message)
 
 
 @dispatcher.callback_query_handler(Text('proxy_toggle'), state=states.Settings.main)
@@ -598,11 +603,13 @@ async def on_proxy_toggle(callback: CallbackQuery, state: FSMContext):
     settings = await Settings.get()
     settings.enable_proxy = not settings.enable_proxy
     await settings.save()
-    await callback.message.edit_reply_markup(reply_markup=keyboards.settings_menu(settings))
-
+    await enter_settings(callback)
 
 @dispatcher.callback_query_handler(Text('add_sessions'), state=states.Settings.main)
 async def add_sessions(callback: CallbackQuery, state: FSMContext):
+    if not await ApiConfig.exists():
+        await callback.answer('🚫 Please add at least one api config.')
+        return
     await states.Settings.add_sessions.set()
     msg = 'Please upload <b>.zip</b> archive with session files or <b>.session</b> file.'
     await callback.message.edit_text(msg, reply_markup=keyboards.back())
@@ -612,13 +619,8 @@ async def add_sessions(callback: CallbackQuery, state: FSMContext):
 # TODO: seems that file sessions are not cleared
 @dispatcher.message_handler(content_types=ContentType.DOCUMENT, state=states.Settings.add_sessions)
 async def add_sessions_upload(message: Message, state: FSMContext):
-    if not await ApiConfig.exists():
-        msg = '🚫 Please add at least on api config.'
-        await message.reply(msg)
-        return
     document = message.document
     phone, ext = os.path.splitext(document.file_name)
-    # print('FILE NAME: {}'.format(file_name))
     if ext in ('.zip', '.session'):
         sessions = {}
         dirname = 'temp/{}'.format(message.chat.id)
@@ -631,6 +633,7 @@ async def add_sessions_upload(message: Message, state: FSMContext):
             try:
                 archive = zipfile.ZipFile(file)
             except zipfile.BadZipfile:
+                await states.Settings.add_sessions.set()
                 msg = '🚫 Invalid file.\nPlease upload solid <b>.zip</b> archive.'
                 await message.reply(msg, reply_markup=keyboards.back())
                 return
@@ -656,7 +659,7 @@ async def add_sessions_upload(message: Message, state: FSMContext):
         if len(sessions) > 1:
             random.shuffle(confs)
             await message.delete()
-        settings = await Settings.get()
+        settings = await Settings.get_cached()
         created = 0
         exist = 0
         confs_len = len(confs)
@@ -670,8 +673,7 @@ async def add_sessions_upload(message: Message, state: FSMContext):
                     name=phone,
                     phone=phone,
                     session_string=session,
-                    invites_max=settings.get_relative_invite_limit(),
-                    auto_created=True
+                    invites=settings.get_invites_random(),
                 )
                 created += 1
             else:
@@ -681,8 +683,7 @@ async def add_sessions_upload(message: Message, state: FSMContext):
             msg += '\n<i>{} accounts already exist.</i>'.format(exist)
         await message.answer(msg)
         shutil.rmtree(dirname)
-        await states.Settings.main.set()
-        await message.answer(str(settings), reply_markup=keyboards.settings_menu(settings))
+        await enter_settings(message)
     else:
         msg = '🚫 Unsupported file format. Valid are: <b>.session</b>, <b>.zip</b>.'
         await message.reply(msg, reply_markup=keyboards.back())
@@ -733,18 +734,14 @@ async def on_start_run(callback: CallbackQuery, state: FSMContext):
         msg = '🚫 Target group is not set. Please add it in the groups menu.'
     else:
         await callback.message.answer('Updating accounts...')
-        await update_accounts_limits()
-        if not await Account.filter(invites_sent__lt=F('invites_max')).exists():
-            next_acc = await Account.filter(invites_reset_at__not_isnull=True).order_by('invites_reset_at').first()
-            msg = '🙅🏻 All accounts have reached their limits.'
-            if next_acc:
-                date_str = next_acc.invites_reset_at.strftime('%d-%m-%Y %H:%M')
-                msg += ' Next account will be available at {}'.format(date_str)
+        await Account.update_invites()
+        if not await Account.filter(authenticated=True, deactivated=False, invites__gt=0).exists():
+            msg = '🙅🏻 All operating accounts have reached their limits.'
         else:
             await state.reset_state()
-            queue = Queue()
-            await state.set_data({'queue': queue})
-            asyncio.create_task(tasks.scrape(chat_id, queue), name=str(chat_id))
+            # queue = Queue()
+            # await state.set_data({'queue': queue})
+            asyncio.create_task(tasks.scrape(chat_id), name=str(chat_id))
             await callback.answer('420!')
             return
     await callback.message.answer(msg)

@@ -1,38 +1,48 @@
 import asyncio
 import datetime
+import enum
 import random
 
 from aiogram.utils.markdown import quote_html
-from tortoise import fields, Tortoise
+from tortoise import fields, timezone, Tortoise
+from tortoise.functions import Function
 from tortoise.models import Model
+import pypika
 
 
 class Settings(Model):
+    _cached = None
+
     # api_id = fields.IntField(null=True)
     # api_hash = fields.CharField(max_length=50, null=True)
-    last_seen = fields.IntField(default=0)
-    join_delay = fields.IntField(default=60)
-    invite_limit = fields.IntField(default=30)
-    limit_reset_days = fields.IntField(default=30)
+    join_interval = fields.IntField(default=60)
+    # TODO: add handlers etc
+    # invites_per_hour = fields.IntField(default=5000)
+    invites_limit = fields.IntField(default=35)
+    invites_reset_after = fields.IntField(default=1)  # days
+    recent = fields.BooleanField(default=False)
     enable_proxy = fields.BooleanField(default=True)
 
-    def __str__(self):
-        # api_id = self.api_id or 'Not set'
-        # api_hash = self.api_hash or 'Not set'
-        last_seen = self.last_seen or 'Any'
+    def __str__(self):  # FIXME
         return (f'⚙  Settings\n\n'
-                # f'Api id: <code>{api_id}</code>\n'
-                # f'Api hash: <code>{api_hash}</code>\n'
-                f'Max last seen days: <code>{last_seen}</code>\n'
-                f'Join delay: <code>{self.join_delay}</code> seconds\n'
-                f'Session invite limit: <code>{self.invite_limit}</code>\n'
-                f'Limit resets after: <code>{self.limit_reset_days}</code> days')
-        # self.api_id or 'Not set'
+                f'Join delay: <code>{self.join_interval}</code> seconds\n'
+                f'Session invite limit: <code>{self.invites_limit}</code>\n'
+                f'Limit resets after: <code>{self.invites_reset_after}</code> days')
 
-    def get_relative_invite_limit(self):
-        low = max(0, self.invite_limit - 5)
-        high = min(50, self.invite_limit + 5)
+    async def save(self, *args, **kwargs):
+        await super().save(*args, **kwargs)
+        self._cached = None
+
+    def get_invites_random(self, offset=5):
+        low = max(0, self.invites_limit - offset)
+        high = min(50, self.invites_limit + offset)
         return random.randint(low, high)
+
+    @classmethod
+    async def get_cached(cls):
+        if not cls._cached:
+            cls._cached = await cls.get()
+        return cls._cached
 
 
 class ApiConfig(Model):
@@ -47,47 +57,20 @@ class ApiConfig(Model):
                 f'Verified: {verified}')
 
 
-class Proxy(Model):
-    address = fields.CharField(max_length=2048)
-    port = fields.IntField()
-    username = fields.CharField(max_length=128)
-    passwd = fields.CharField(max_length=64)
-
-
 class Account(Model):
     api_id = fields.IntField()
     api_hash = fields.CharField(max_length=128)
     phone = fields.CharField(max_length=20, unique=True)
     name = fields.CharField(max_length=255)
     session_string = fields.TextField(null=True)
-    invites_max = fields.IntField(null=True)
-    invites_sent = fields.IntField(default=0)
-    invites_reset_at = fields.DatetimeField(null=True)
-    master = fields.BooleanField(default=False)
-    auto_created = fields.BooleanField(default=False)
+    invites = fields.IntField(null=True)
+    sleep_until = fields.DatetimeField(null=True)
+    authenticated = fields.BooleanField(default=True)
+    deactivated = fields.BooleanField(default=False)
     created_at = fields.DatetimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ['-master', '-created_at']
-
-    async def incr_invites(self, num=1):
-        self.invites_sent += num
-        await self.save()
-
-    @property
-    def can_invite(self):
-        return self.invites_sent < self.invites_max
-
-    @property
-    def invites_left(self):
-        return self.invites_max - self.invites_sent
-
-    async def refresh_invites(self):
-        if not self.can_invite:
-            reset_at = self.invites_reset_at.replace(tzinfo=None)
-            if datetime.datetime.now() >= reset_at:
-                self.invites_sent = 0
-                await self.save()
+        ordering = ['-created_at']
 
     @property
     def safe_name(self):
@@ -98,23 +81,31 @@ class Account(Model):
                f'Phone: <b>{self.phone}</b>\n'
                f'API id: <b>{self.api_id}</b>\n'
                f'API hash: <b>{self.api_hash}</b>\n\n'
-               f'Invites limit: <b>{self.invites_max}</b>\n'
-               f'Invites sent: <b>{self.invites_sent}</b>')
-        if not self.can_invite:
-            msg += '\nInvites reset at: <b>{}</b>'.format(self.invites_reset_at.strftime('%d-%m-%Y %H:%M'))
-        if self.auto_created:
-            msg += '\n<i>Account was created automatically.</i>'
-        if self.master:
-            msg = '🎩 Main account\n' + msg
+               f'Invites left: <b>{self.invites}</b>\n')
+        # if not self.can_invite:
+        #     msg += '\nInvites reset at: <b>{}</b>'.format(self.invites_reset_at.strftime('%d-%m-%Y %H:%M'))
+        # if self.auto_created:
+        #     msg += '\n<i>Account was created automatically.</i>'
+        # if self.master:
+        #     msg = '🎩 Main account\n' + msg
         return msg
+
+    @classmethod
+    async def update_invites(cls):
+        settings = await Settings.get()
+        for acc in await cls.filter(invites=0, sleep_until__lte=timezone.now()):
+            acc.invites = settings.get_invites_random()
+            await acc.save()
 
 
 class Group(Model):
     name = fields.CharField(max_length=128, null=True)
     link = fields.CharField(max_length=2048)
-    users_count = fields.IntField(null=True)
     enabled = fields.BooleanField(default=True)
     is_target = fields.BooleanField(default=False)
+    # join_interval = fields.IntField(default=60)
+
+    users_count = fields.IntField(null=True)
     details = fields.CharField(max_length=256, null=True)
 
     @property
@@ -148,7 +139,9 @@ class Group(Model):
 async def init_db():
     await Tortoise.init(
         db_url='sqlite://db.sqlite3',
-        modules={'models': ['tg_scraper.models']}
+        modules={'models': ['tg_scraper.models']},
+        use_tz=True,
+        timezone='UTC'
     )
     await Tortoise.generate_schemas()
     if not await Settings.exists():

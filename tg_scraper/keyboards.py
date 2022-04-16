@@ -4,8 +4,7 @@ import operator
 
 from aiogram.types.inline_keyboard import InlineKeyboardButton, InlineKeyboardMarkup
 
-from .conf import LastSeenEnum
-
+from .models import Settings
 
 PAGE_SIZE = 25
 
@@ -16,6 +15,16 @@ def inline_markup(func):
     def wrapper(*args, **kwargs):
         keyboard = []
         for row in func(*args, **kwargs):
+            keyboard.append([InlineKeyboardButton(**data) for data in row])
+        return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+    return wrapper
+
+def async_inline_markup(func):
+
+    async def wrapper(*args, **kwargs):
+        keyboard = []
+        for row in await func(*args, **kwargs):
             keyboard.append([InlineKeyboardButton(**data) for data in row])
         return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -99,17 +108,20 @@ def account_detail():
     ]
 
 
-@inline_markup
-def settings_menu(settings):
-    proxy_text = '👤 Use proxy  {}'.format('☑' if settings.enable_proxy else '◻')
+@async_inline_markup
+async def settings_menu():
+    settings = await Settings.get_cached()
+    recent = '⌚ Last seen recently' if settings.recent else '*️⃣ All users'
+    proxy = '👤 Use proxy  {}'.format('☑' if settings.enable_proxy else '◻')
     return [
         # [{'text': '🎛 Run', 'callback_data': 'run'}],
         [{'text': '🆔 Api configs', 'callback_data': 'api_configs'}],
-        [{'text': '🚷 Last seen filter', 'callback_data': 'last_seen'}],
-        [{'text': '⏱ Group join delay', 'callback_data': 'join_delay'}],
-        [{'text': '🎚 Invites limit', 'callback_data': 'invites'}],
-        [{'text': '⌛ Limit reset', 'callback_data': 'reset'}],
-        [{'text': proxy_text, 'callback_data': 'proxy_toggle'}],
+        [{'text': '⏱ Group join delay', 'callback_data': 'join_interval'}],
+        # [{'text': '', 'callback_data': ''}]
+        [{'text': '🎚 Account invites limit', 'callback_data': 'invites_limit'}],
+        [{'text': '⌛ Account limit reset', 'callback_data': 'invites_reset'}],
+        [{'text': recent, 'callback_data': 'recent_toggle'}],
+        # [{'text': proxy, 'callback_data': 'proxy_toggle'}],
         [{'text': '💾 Add sessions', 'callback_data': 'add_sessions'}],
         [{'text': '↩ Back', 'callback_data': 'to_menu'}]
     ]
@@ -126,17 +138,17 @@ def run_settings():
     ]
 
 
-@inline_markup
-def last_seen_filter(settings):
-    markup = []
-    for status in LastSeenEnum:
-        text = status.verbose_name
-        val = status.value
-        if val == settings.last_seen:
-            text += '  💚'
-        markup.append([{'text': text, 'callback_data': str(val)}])
-    markup.append([{'text': '↩ Back', 'callback_data': 'settings_menu'}])
-    return markup
+# @inline_markup
+# def last_seen_filter(settings):
+#     markup = []
+#     for status in LastSeenEnum:
+#         text = status.verbose_name
+#         val = status.value
+#         if val == settings.last_seen:
+#             text += '  💚'
+#         markup.append([{'text': text, 'callback_data': str(val)}])
+#     markup.append([{'text': '↩ Back', 'callback_data': 'settings_menu'}])
+#     return markup
 
 
 @inline_markup

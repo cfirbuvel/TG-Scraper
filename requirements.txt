@@ -11,6 +11,9 @@ decorator==5.1.1
 Faker==9.8.2
 idna==3.2
 iso8601==0.1.16
+markdown-it-py==2.0.1
+mdit-py-plugins==0.3.0
+mdurl==0.1.0
 more-itertools==8.10.0
 multidict==5.1.0
 pyaes==1.6.1

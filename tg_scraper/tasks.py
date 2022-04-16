@@ -151,11 +151,11 @@ async def log_details(chat_id, stats, groups):
         try:
             if not messages:
                 messages.append(await bot.send_message(chat_id, msg, disable_web_page_preview=True))
-                await relative_sleep(1)
+                await relative_sleep(1.5)
                 messages.append(await bot.send_message(chat_id, logs, disable_web_page_preview=True))
             else:
                 await messages[0].edit_text(msg, disable_web_page_preview=True)
-                await relative_sleep(1)
+                await relative_sleep(1.5)
                 await messages[1].edit_text(logs, disable_web_page_preview=True)
         except MessageNotModified:  # FIXME
             pass

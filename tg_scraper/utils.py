@@ -1,8 +1,11 @@
 import asyncio
 import datetime
+import hashlib
+import json
 import logging
 import random
 import re
+import time
 
 import aiosqlite
 from aiogram.utils.markdown import quote_html
@@ -24,17 +27,17 @@ async def relative_sleep(delay):
     await asyncio.sleep(delay)
 
 
-def is_channel(group):
-    return _entity_type(group) == _EntityType.CHANNEL
-
-
-def sign_msg(text, sign='💥'):
-    return sign + ' ' + text
-
-
-def exc_to_msg(exception):
-    msg = re.sub(r'\(caused by \w+\)\s*$', '', str(exception))
-    return quote_html(msg)
+# def is_channel(group):
+#     return _entity_type(group) == _EntityType.CHANNEL
+#
+#
+# def sign_msg(text, sign='💥'):
+#     return sign + ' ' + text
+#
+#
+# def exc_to_msg(exception):
+#     msg = re.sub(r'\(caused by \w+\)\s*$', '', str(exception))
+#     return quote_html(msg)
 
 
 def task_running(chat_id):
@@ -57,7 +60,12 @@ async def session_db_to_string(path):
             return obj.save()
 
 
-async def get_proxy():
+def hash_object(obj):
+    string = json.dumps(obj)
+    return hashlib.md5(string.encode('utf8')).hexdigest()
+
+
+# async def get_proxy():
     # res = []
     # with open('proxies.txt') as f:
     #     for line in f:
@@ -77,11 +85,19 @@ async def get_proxy():
     #             print(proxy)
     #             res.append(proxy)
     # return res
-    settings = await Settings.get_cached()
-    if settings.enable_proxy:
-        return {
-            'proxy_type': ProxyType.SOCKS5,
-            'addr': '127.0.0.1',
-            'port': 9050,
-        }
+    # settings = await Settings.get_cached()
+    # if settings.enable_proxy:
+    #     return {
+    #         'proxy_type': ProxyType.SOCKS5,
+    #         'addr': '127.0.0.1',
+    #         'port': 9050,
+    #     }
 
+
+# class TimeQueue(asyncio.Queue):
+#
+#     def put_nowait(self, item, delay=0):
+#         item = (time.time() + delay, item)
+#         super().put_nowait(item)
+#
+#     def get(self):

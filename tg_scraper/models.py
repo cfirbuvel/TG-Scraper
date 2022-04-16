@@ -5,22 +5,19 @@ import random
 
 from aiogram.utils.markdown import quote_html
 from tortoise import fields, timezone, Tortoise
-from tortoise.expressions import F
+from tortoise.functions import Function
 from tortoise.models import Model
+import pypika
 
 
 class Settings(Model):
     _cached = None
 
-    class TimeUnit(enum.IntEnum):
-        HOUR = 1
-        DAY = 24
     # api_id = fields.IntField(null=True)
     # api_hash = fields.CharField(max_length=50, null=True)
     join_interval = fields.IntField(default=60)
     # TODO: add handlers etc
-    growth = fields.IntField(default=5000)
-    growth_timerange = fields.IntEnumField(TimeUnit, default=TimeUnit.DAY)
+    # invites_per_hour = fields.IntField(default=5000)
     invites_limit = fields.IntField(default=35)
     invites_reset_after = fields.IntField(default=1)  # days
     recent = fields.BooleanField(default=False)
@@ -60,13 +57,6 @@ class ApiConfig(Model):
                 f'Verified: {verified}')
 
 
-# class Proxy(Model):
-#     address = fields.CharField(max_length=2048)
-#     port = fields.IntField()
-#     username = fields.CharField(max_length=128)
-#     passwd = fields.CharField(max_length=64)
-
-
 class Account(Model):
     api_id = fields.IntField()
     api_hash = fields.CharField(max_length=128)
@@ -74,43 +64,13 @@ class Account(Model):
     name = fields.CharField(max_length=255)
     session_string = fields.TextField(null=True)
     invites = fields.IntField(null=True)
-    invites_ended_at = fields.DatetimeField(null=True)
-    # invites_max = fields.IntField(null=True)
-    # invites_sent = fields.IntField(default=0)
-    # invites_reset_at = fields.DatetimeField(null=True)
+    sleep_until = fields.DatetimeField(null=True)
     authenticated = fields.BooleanField(default=True)
     deactivated = fields.BooleanField(default=False)
     created_at = fields.DatetimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['-created_at']
-
-    # async def incr_invites(self, num=1):
-    #     self.invites_sent += num
-    #     await self.save()
-
-    # @property
-    # def can_invite(self):
-    #     return self.invites_sent < self.invites_max
-
-    # @property
-    # def invites_left(self):
-    #     return self.invites_max - self.invites_sent
-
-    # async def refresh_invites(self):
-    #     if not self.invites:
-    #         settings = await Settings.get_cached()
-    #         if (self.invites_ended_at + datetime.timedelta(days=settings.invites_timeframe)) <= timezone.now():
-    #         reset_at = self.invites_reset_at.replace(tzinfo=None)
-    #         if datetime.datetime.now() >= reset_at:
-    #             self.invites_sent = 0
-    #             await self.save()
-    #
-    #     if not self.can_invite:
-    #         reset_at = self.invites_reset_at.replace(tzinfo=None)
-    #         if datetime.datetime.now() >= reset_at:
-    #             self.invites_sent = 0
-    #             await self.save()
 
     @property
     def safe_name(self):
@@ -133,8 +93,9 @@ class Account(Model):
     @classmethod
     async def update_invites(cls):
         settings = await Settings.get()
-        resets = timezone.now() + datetime.timedelta(days=settings.invites_reset_after)
-        await cls.filter(invites=0, invites_ended_at__lte=resets).update(invites=settings.get_invites_random())
+        for acc in await cls.filter(invites=0, sleep_until__lte=timezone.now()):
+            acc.invites = settings.get_invites_random()
+            await acc.save()
 
 
 class Group(Model):
@@ -142,7 +103,7 @@ class Group(Model):
     link = fields.CharField(max_length=2048)
     enabled = fields.BooleanField(default=True)
     is_target = fields.BooleanField(default=False)
-    join_interval = fields.IntField(default=60)
+    # join_interval = fields.IntField(default=60)
 
     users_count = fields.IntField(null=True)
     details = fields.CharField(max_length=256, null=True)

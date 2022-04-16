@@ -4,7 +4,6 @@ import operator
 
 from aiogram.types.inline_keyboard import InlineKeyboardButton, InlineKeyboardMarkup
 
-from .conf import LastSeenEnum
 from .models import Settings
 
 PAGE_SIZE = 25
@@ -117,11 +116,12 @@ async def settings_menu():
     return [
         # [{'text': '🎛 Run', 'callback_data': 'run'}],
         [{'text': '🆔 Api configs', 'callback_data': 'api_configs'}],
-        [{'text': '⏱ Group join delay', 'callback_data': 'group_join_interval'}],
-        [{'text': '🎚 Invites limit', 'callback_data': 'invites'}],
-        [{'text': '⌛ Limit reset', 'callback_data': 'reset'}],
+        [{'text': '⏱ Group join delay', 'callback_data': 'join_interval'}],
+        # [{'text': '', 'callback_data': ''}]
+        [{'text': '🎚 Account invites limit', 'callback_data': 'invites_limit'}],
+        [{'text': '⌛ Account limit reset', 'callback_data': 'invites_reset'}],
         [{'text': recent, 'callback_data': 'recent_toggle'}],
-        [{'text': proxy, 'callback_data': 'proxy_toggle'}],
+        # [{'text': proxy, 'callback_data': 'proxy_toggle'}],
         [{'text': '💾 Add sessions', 'callback_data': 'add_sessions'}],
         [{'text': '↩ Back', 'callback_data': 'to_menu'}]
     ]
@@ -138,17 +138,17 @@ def run_settings():
     ]
 
 
-@inline_markup
-def last_seen_filter(settings):
-    markup = []
-    for status in LastSeenEnum:
-        text = status.verbose_name
-        val = status.value
-        if val == settings.last_seen:
-            text += '  💚'
-        markup.append([{'text': text, 'callback_data': str(val)}])
-    markup.append([{'text': '↩ Back', 'callback_data': 'settings_menu'}])
-    return markup
+# @inline_markup
+# def last_seen_filter(settings):
+#     markup = []
+#     for status in LastSeenEnum:
+#         text = status.verbose_name
+#         val = status.value
+#         if val == settings.last_seen:
+#             text += '  💚'
+#         markup.append([{'text': text, 'callback_data': str(val)}])
+#     markup.append([{'text': '↩ Back', 'callback_data': 'settings_menu'}])
+#     return markup
 
 
 @inline_markup

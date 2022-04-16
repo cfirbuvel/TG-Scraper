@@ -2,27 +2,22 @@ import logging
 
 from telethon.client import TelegramClient
 from telethon.errors.rpcerrorlist import *
-from telethon.helpers import _entity_type, _EntityType
-from telethon.sessions.memory import MemorySession
-from telethon.sessions.string import StringSession
-from telethon.tl import types
-from telethon.errors.rpcerrorlist import ChatInvalidError
-from telethon.tl.functions.contacts import GetBlockedRequest, UnblockRequest, SearchRequest
+from telethon.tl.functions.contacts import GetBlockedRequest, UnblockRequest
 from telethon.tl.functions.channels import GetParticipantsRequest, DeleteChannelRequest, JoinChannelRequest, \
-    InviteToChannelRequest, GetParticipantRequest, LeaveChannelRequest
-from telethon.tl.functions.messages import GetFullChatRequest, DeleteChatRequest, CheckChatInviteRequest, \
-    ImportChatInviteRequest, AddChatUserRequest
-from tortoise.exceptions import DoesNotExist
-# from telethon.utils
+    LeaveChannelRequest
+from telethon.tl.types import ChannelParticipantsSearch, ChannelParticipantsRecent
 
-from .utils import relative_sleep, is_channel
+from .utils import relative_sleep
 
 
 logger = logging.getLogger(__name__)
 
 
-class IsBroadcastChannelError(Exception):
-    pass
+class GroupInvalidError(Exception):
+
+    def __init__(self, msg, *args):
+        self.msg = msg
+        super().__init__(msg, *args)
 
 
 class CustomTelegramClient(TelegramClient):
@@ -49,38 +44,34 @@ class CustomTelegramClient(TelegramClient):
     #             raise IsBroadcastChannelError()
     #     return res
 
-    async def invite_to_group(self, user, entity):
-        if is_channel(entity):
-            try:
-                await self(GetParticipantRequest(entity, user))
-                raise UserAlreadyParticipantError('Temp.')
-            except UserNotParticipantError:
-                return await self(InviteToChannelRequest(channel=entity, users=[user]))
-        else:
-            await self(AddChatUserRequest(chat_id=entity.id, user_id=user.id, fwd_limit=50))
+    # # TODO: hash
+    # async def get_users(self, channel, recent=False):
+    #     if recent:
+    #         filter = types.ChannelParticipantsRecent()
+    #     else:
+    #         filter = types.ChannelParticipantsSearch('')
+    #     limit = 100
+    #     offset = 0
+    #     while True:
+    #         participants = await self(GetParticipantsRequest(channel, filter=filter, offset=offset, limit=limit, hash=0))
+    #         # except (UserDeactivatedBanError, UserBannedInChannelError, UserBlockedError, UserKickedError) as e:
+    #         #     logger.info(e)
+    #         #     return
+    #         users = participants.users
+    #         if not users:
+    #             break
+    #         offset += len(users)
+    #         for user in users:
+    #             yield user
+    #         await relative_sleep(0.3)
 
-    # TODO: hash
-    async def get_users(self, channel, recent=False):
+    async def get_users(self, channel, offset, limit=100, recent=False):
         if recent:
-            filter = types.ChannelParticipantsRecent()
+            filter = ChannelParticipantsRecent()
         else:
-            filter = types.ChannelParticipantsSearch('')
-        limit = 100
-        offset = 0
-        while True:
-            participants = await self(GetParticipantsRequest(channel, filter=filter, offset=offset, limit=limit, hash=0))
-            # except (UserDeactivatedBanError, UserBannedInChannelError, UserBlockedError, UserKickedError) as e:
-            #     logger.info(e)
-            #     return
-            print('GetParticipants')
-            print(participants)
-            users = participants.users
-            if not users:
-                break
-            offset += len(users)
-            for user in users:
-                yield user
-            await relative_sleep(0.3)
+            filter = ChannelParticipantsSearch('')
+        res = await self(GetParticipantsRequest(channel, filter, offset, limit, hash=0))
+        return res.users
 
     async def clear_channels(self, free_slots=1):
         dialogs = await self.get_dialogs()
@@ -95,6 +86,24 @@ class CustomTelegramClient(TelegramClient):
             else:
                 await self(LeaveChannelRequest(entity))
             await relative_sleep(2.5)
+
+    async def join_group(self, link):
+        while True:
+            try:
+                group = (await self(JoinChannelRequest(link))).chats[0]
+            except ChannelsTooMuchError:
+                await self.clear_channels(free_slots=10)
+                continue
+            except ValueError:
+                msg = 'Invalid invite link'
+            except ChannelInvalidError:
+                msg = 'Invalid type (private groups not supported)'
+            else:
+                if group.broadcast:
+                    msg = 'Is channel'
+                else:
+                    return group
+            raise GroupInvalidError(msg)
 
     async def clear_blocked(self):
         limit = 100

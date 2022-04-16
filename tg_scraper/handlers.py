@@ -9,6 +9,7 @@ import os
 import random
 import re
 import shutil
+import traceback
 from urllib.parse import urlsplit
 import zipfile
 
@@ -25,7 +26,6 @@ import validators
 
 from . import tasks, keyboards, states
 from .bot import dispatcher
-from .filters import CallbackData
 from .models import Account, Group, Settings, ApiConfig
 from .utils import task_running, session_db_to_string
 
@@ -54,12 +54,29 @@ async def enter_settings(update):
         await update.message.edit_text(msg, reply_markup=reply_markup)
         await update.answer()
 
+
 @dispatcher.message_handler(commands=['start'], state='*')
 async def start(message: Message):
+    data = [
+        {
+            'link': 'https://t.me/BitShibaToken', 'status': 'Active', 'active': 3,
+            'joined': 8, 'kicked': [21, 1, 4, 7], 'users_processed': 843, 'users_added': 343
+        },
+        {
+            'link': 'https://t.me/gjgjjgjgjgj', 'status': 'Processed', 'active': 1,
+            'joined': 12, 'kicked': [4, 7], 'users_processed': 346, 'users_added': 90
+        },
+    ]
+    from urllib.parse import urlsplit
+    url = 'https://t.me/BitShibaToken'
+    u = urlsplit(url)
+
+    msg = ('<a href="{}"><b>{}</b></a>').format(url, u.path.strip('/'))
+    await message.answer(msg, disable_web_page_preview=True)
     await to_main_menu(message)
 
 
-@dispatcher.callback_query_handler(CallbackData('add_acc'), state=(states.Menu.main, None))
+@dispatcher.callback_query_handler(Text('add_acc'), state=(states.Menu.main, None))
 async def add_acc(callback: CallbackQuery, state: FSMContext):
     await states.AddAccount.phone.set()
     await callback.message.edit_text('Please enter phone number', reply_markup=keyboards.back())
@@ -84,7 +101,7 @@ async def add_user_enter_phone(message: Message, state: FSMContext):
     await message.answer('Please enter phone number', reply_markup=keyboards.back())
 
 
-@dispatcher.callback_query_handler(CallbackData('back'), state=states.AddAccount.phone)
+@dispatcher.callback_query_handler(Text('back'), state=states.AddAccount.phone)
 async def add_user_enter_phone_back(callback_query: CallbackQuery, state: FSMContext):
     await state.reset_data()
     await to_main_menu(callback_query.message, callback_query=callback_query, edit=True)
@@ -103,7 +120,7 @@ async def add_user_enter_id(message: Message, state: FSMContext):
     await message.answer('Please enter <b>API hash</b>', reply_markup=reply_markup)
 
 
-@dispatcher.callback_query_handler(CallbackData('back'), state=states.AddAccount.api_id)
+@dispatcher.callback_query_handler(Text('back'), state=states.AddAccount.api_id)
 async def add_user_enter_id_back(callback_query: CallbackQuery, state: FSMContext):
     await states.AddAccount.phone.set()
     await callback_query.message.edit_text('Please enter phone number', reply_markup=keyboards.back())
@@ -118,7 +135,7 @@ async def add_user_enter_hash(message: Message, state: FSMContext):
     await message.answer('Please enter account name', reply_markup=keyboards.cancel_back())
 
 
-@dispatcher.callback_query_handler(CallbackData('back'), state=states.AddAccount.api_hash)
+@dispatcher.callback_query_handler(Text('back'), state=states.AddAccount.api_hash)
 async def add_user_enter_hash_back(callback_query: CallbackQuery, state: FSMContext):
     await states.AddAccount.api_id.set()
     await callback_query.message.edit_text('Please enter *API ID*', reply_markup=keyboards.cancel_back())
@@ -136,14 +153,14 @@ async def add_user_enter_name(message: Message, state: FSMContext):
     await to_main_menu(message)
 
 
-@dispatcher.callback_query_handler(CallbackData('back'), state=states.AddAccount.name)
+@dispatcher.callback_query_handler(Text('back'), state=states.AddAccount.name)
 async def add_user_enter_name_back(callback_query: CallbackQuery, state: FSMContext):
     await states.AddAccount.api_hash.set()
     await callback_query.message.edit_text('Please enter <b>API hash</b>', reply_markup=keyboards.cancel_back())
     await callback_query.answer()
 
 
-@dispatcher.callback_query_handler(CallbackData('to_menu'), state=(
+@dispatcher.callback_query_handler(Text('to_menu'), state=(
         states.AddAccount.api_id, states.AddAccount.api_hash, states.AddAccount.name,
         states.Accounts.list, states.Settings.main, states.Groups.main
 ))
@@ -152,7 +169,7 @@ async def on_back_to_menu(callback_query: CallbackQuery, state: FSMContext):
     await to_main_menu(callback_query.message, callback_query=callback_query, edit=True)
 
 
-@dispatcher.callback_query_handler(CallbackData('accounts'), state=(states.Menu.main, None))
+@dispatcher.callback_query_handler(Text('accounts'), state=(states.Menu.main, None))
 async def accounts_menu(callback_query: CallbackQuery, state: FSMContext):
     await states.Accounts.list.set()
     accounts = await Account.all().values_list('id', 'name')
@@ -182,7 +199,7 @@ async def accounts_select(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@dispatcher.callback_query_handler(CallbackData('delete'), state=states.Accounts.detail)
+@dispatcher.callback_query_handler(Text('delete'), state=states.Accounts.detail)
 async def account_delete(callback: CallbackQuery, state: FSMContext):
     await states.Accounts.delete.set()
     user_data = await state.get_data()
@@ -192,7 +209,7 @@ async def account_delete(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@dispatcher.callback_query_handler(CallbackData('yes'), state=states.Accounts.delete)
+@dispatcher.callback_query_handler(Text('yes'), state=states.Accounts.delete)
 async def account_delete_yes(callback: CallbackQuery, state: FSMContext):
     await states.Accounts.list.set()
     async with state.proxy() as user_data:
@@ -206,7 +223,7 @@ async def account_delete_yes(callback: CallbackQuery, state: FSMContext):
     await callback.answer('Deleted')
 
 
-@dispatcher.callback_query_handler(CallbackData('no'), state=states.Accounts.delete)
+@dispatcher.callback_query_handler(Text('no'), state=states.Accounts.delete)
 async def account_delete_no(callback: CallbackQuery, state: FSMContext):
     await states.Accounts.detail.set()
     user_data = await state.get_data()
@@ -215,7 +232,7 @@ async def account_delete_no(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@dispatcher.callback_query_handler(CallbackData('set_main'), state=states.Accounts.detail)
+@dispatcher.callback_query_handler(Text('set_main'), state=states.Accounts.detail)
 async def on_account_set_main(callback: CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
     acc = await Account.get(id=user_data['acc_id'])
@@ -227,7 +244,7 @@ async def on_account_set_main(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@dispatcher.callback_query_handler(CallbackData('back'), state=states.Accounts.detail)
+@dispatcher.callback_query_handler(Text('back'), state=states.Accounts.detail)
 async def account_detail_back(callback: CallbackQuery, state: FSMContext):
     await states.Accounts.list.set()
     page = (await state.get_data())['list_page']
@@ -243,33 +260,43 @@ async def on_groups(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@dispatcher.callback_query_handler(CallbackData('add'), state=states.Groups.main)
+@dispatcher.callback_query_handler(Text('add'), state=states.Groups.main)
 async def on_add_group(callback: CallbackQuery, state: FSMContext):
     await states.Groups.add.set()
-    await callback.message.edit_text('Please enter group invite link.', reply_markup=keyboards.back())
+    await callback.message.edit_text('Please enter group invite link(s).', reply_markup=keyboards.back())
     await callback.answer()
 
 
 @dispatcher.message_handler(state=states.Groups.add)
 async def on_add_group_link(message: Message, state: FSMContext):
-    link = message.text.strip()
-    parts = urlsplit(link)
-    if not parts.scheme:
-        link = 'https://' + link
-    if not validators.url(link):
-        msg = '🚫 Not a valid URL. Please enter correct URL.'
-    elif await Group.exists(link=link):
-        msg = '🚫 Group with this link already exists. Please enter another value.'
-    else:
-        await Group.create(link=link)
+    links = re.split(r'\s+', message.text.strip())
+    created = 0
+    errors = []
+    for link in links:
+        parts = urlsplit(link)
+        if not parts.scheme:
+            link = 'https://' + link
+        if not validators.url(link):
+            errors.append('URL {} is not valid.'.format(link))
+        elif await Group.exists(link=link):
+            errors.append('Group {} already exists.'.format(link))
+        else:
+            await Group.create(link=link)
+            created += 1
+    errors = '\n'.join(errors)
+    if created:
+        msg = '✔ Added {} groups.'.format(created)
+        if errors:
+            msg = '{}\n🚫 {}'.format(msg, errors)
         await states.Groups.main.set()
-        await message.answer('✔️ Added group.')
+        await message.answer(msg)
         await message.answer('🔗 Groups', reply_markup=keyboards.groups())
-        return
-    await message.answer(msg, reply_markup=keyboards.back())
+    else:
+        msg = '🚫 {}\nPlease try again.'.format(errors)
+        await message.answer(msg, reply_markup=keyboards.back())
 
 
-@dispatcher.callback_query_handler(CallbackData('list'), state=states.Groups.main)
+@dispatcher.callback_query_handler(Text('list'), state=states.Groups.main)
 async def on_groups_list(callback: CallbackQuery, state: FSMContext):
     await states.Groups.list.set()
     groups = await Group.all()
@@ -489,7 +516,7 @@ async def on_api_config_delete_confirm(callback: CallbackQuery, state: FSMContex
         await callback.answer()
 
 
-@dispatcher.callback_query_handler(CallbackData('invites'), state=states.Settings.main)
+@dispatcher.callback_query_handler(Text('invites'), state=states.Settings.main)
 async def on_invites_limit(callback: CallbackQuery, state: FSMContext):
     await states.Settings.invites_limit.set()
     settings = await Settings.get()
@@ -551,34 +578,34 @@ async def on_invites_reset_set(message: Message, state: FSMContext):
 #     await callback.answer()
 
 
-@dispatcher.callback_query_handler(Text('last_seen'), state=states.Settings.main)
-async def on_last_seen_filter(callback: CallbackQuery, state: FSMContext):
-    await states.Settings.last_seen.set()
-    msg = 'Select a last seen status to filter users by'
-    settings = await Settings.get()
-    await callback.message.edit_text(msg, reply_markup=keyboards.last_seen_filter(settings))
-    await callback.answer()
+# @dispatcher.callback_query_handler(Text('last_seen'), state=states.Settings.main)
+# async def on_last_seen_filter(callback: CallbackQuery, state: FSMContext):
+#     await states.Settings.last_seen.set()
+#     msg = 'Select a last seen status to filter users by'
+#     settings = await Settings.get()
+#     await callback.message.edit_text(msg, reply_markup=keyboards.last_seen_filter(settings))
+#     await callback.answer()
+#
+#
+# @dispatcher.callback_query_handler(Regexp(r'^\d+$'), state=states.Settings.last_seen)
+# async def on_last_seen_filter_set(callback: CallbackQuery, state: FSMContext):
+#     choice = int(callback.data)
+#     settings = await Settings.get()
+#     if settings.last_seen != choice:
+#         settings.last_seen = choice
+#         await settings.save()
+#         msg = 'Select a last seen status to filter users by'
+#         await callback.message.edit_text(msg, reply_markup=keyboards.last_seen_filter(settings))
+#     await callback.answer()
 
 
-@dispatcher.callback_query_handler(Regexp(r'^\d+$'), state=states.Settings.last_seen)
-async def on_last_seen_filter_set(callback: CallbackQuery, state: FSMContext):
-    choice = int(callback.data)
-    settings = await Settings.get()
-    if settings.last_seen != choice:
-        settings.last_seen = choice
-        await settings.save()
-        msg = 'Select a last seen status to filter users by'
-        await callback.message.edit_text(msg, reply_markup=keyboards.last_seen_filter(settings))
-    await callback.answer()
-
-
-@dispatcher.callback_query_handler(Text('group_join_interval'), state=states.Settings.main)
+@dispatcher.callback_query_handler(Text('join_interval'), state=states.Settings.main)
 async def on_join_delay(callback: CallbackQuery, state: FSMContext):
     await states.Settings.join_delay.set()
     settings = await Settings.get()
     msg = ('Enter interval for joining a group in seconds.\n'
            '<i>(Small random offset will be added)</i>\n\n'
-           'Current value: <b>{}</b> seconds.').format(settings.group_join_interval)
+           'Current value: <b>{}</b> seconds.').format(settings.join_interval)
     await callback.message.edit_text(msg, reply_markup=keyboards.back())
     await callback.answer()
 
@@ -592,9 +619,12 @@ async def on_join_delay_set(message: Message, state: FSMContext):
         await message.reply(msg, reply_markup=keyboards.back())
     else:
         settings = await Settings.get()
-        settings.group_join_interval = value
+        settings.join_interval = value
         await settings.save()
         await enter_settings(message)
+
+
+@dispatcher.callback_query_handler()
 
 
 @dispatcher.callback_query_handler(Text('proxy_toggle'), state=states.Settings.main)
@@ -604,6 +634,7 @@ async def on_proxy_toggle(callback: CallbackQuery, state: FSMContext):
     settings.enable_proxy = not settings.enable_proxy
     await settings.save()
     await enter_settings(callback)
+
 
 @dispatcher.callback_query_handler(Text('add_sessions'), state=states.Settings.main)
 async def add_sessions(callback: CallbackQuery, state: FSMContext):
@@ -708,7 +739,7 @@ async def on_back_to_groups(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@dispatcher.callback_query_handler(CallbackData('back'), state=states.Groups.detail)
+@dispatcher.callback_query_handler(Text('back'), state=states.Groups.detail)
 async def on_group_detail_back(callback: CallbackQuery, state: FSMContext):
     await states.Groups.list.set()
     page = (await state.get_data())['list_page']
@@ -716,7 +747,7 @@ async def on_group_detail_back(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text('🗂 Groups', reply_markup=keyboards.groups_list(groups, page))
 
 
-@dispatcher.callback_query_handler(CallbackData('start'), state=states.Scrape.main)
+@dispatcher.callback_query_handler(Text('start'), state=states.Scrape.main)
 async def on_start_run(callback: CallbackQuery, state: FSMContext):
     message = callback.message
     chat_id = message.chat.id
@@ -739,8 +770,8 @@ async def on_start_run(callback: CallbackQuery, state: FSMContext):
             msg = '🙅🏻 All operating accounts have reached their limits.'
         else:
             await state.reset_state()
-            # queue = Queue()
-            # await state.set_data({'queue': queue})
+            # items = Queue()
+            # await state.set_data({'items': items})
             asyncio.create_task(tasks.scrape(chat_id), name=str(chat_id))
             await callback.answer('420!')
             return
@@ -788,9 +819,9 @@ async def on_stop(message: Message, state: FSMContext):
 #         await message.answer('🚫 Entered URL is not valid. Please try again.')
 #     else:
 #         await state.reset_state(with_data=False)
-#         queue = (await state.get_data())['queue']
-#         queue.put_nowait(link)
-#         await queue.join()
+#         items = (await state.get_data())['items']
+#         items.put_nowait(link)
+#         await items.join()
 
 
 @dispatcher.message_handler(state=states.Scrape.add_limit)
@@ -806,12 +837,12 @@ async def on_scrape_add_limit(update, state: FSMContext):
             return
         val = max(1, val)
     await state.reset_state(with_data=False)
-    queue = (await state.get_data())['queue']
+    queue = (await state.get_data())['items']
     queue.put_nowait(val)
 
 
 @dispatcher.message_handler(Regexp(r'^[A-Za-z0-9_ ]+$'), state=states.Scrape.enter_code)
-@dispatcher.callback_query_handler(CallbackData('resend', 'skip'), state=states.Scrape.enter_code)
+@dispatcher.callback_query_handler(Text(['resend', 'skip']), state=states.Scrape.enter_code)
 async def on_code_request(update, state: FSMContext):
     await state.reset_state(with_data=False)
     if isinstance(update, Message):
@@ -820,10 +851,19 @@ async def on_code_request(update, state: FSMContext):
         val = update.data
         await update.message.delete()
         await update.answer()
-    queue = (await state.get_data())['queue']
+    queue = (await state.get_data())['items']
     queue.put_nowait(val)
 
 
-@dispatcher.callback_query_handler(CallbackData('blank'), state='*')
+@dispatcher.callback_query_handler(Text('blank'), state='*')
 async def do_nothing(callback: CallbackQuery):
     await callback.answer()
+
+
+@dispatcher.errors_handler()
+async def error_handler(update, exception):
+    try:
+        raise exception
+    except Exception:
+        print('[Aiogram error]')
+        traceback.print_exc()

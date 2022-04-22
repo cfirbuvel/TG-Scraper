@@ -35,25 +35,36 @@ logger = logging.getLogger(__name__)
 
 async def to_main_menu(message, callback_query=None, callback_answer=None, edit=False):
     await states.Menu.main.set()
-    text = f"""
-    ╔╦╗╔═╗
-   ║   ║   ╦            version : 2.1
-   ╩   ╚═╝
-╔═╗┌─┐┬─┐┌─┐┌─┐┌─┐┬─┐
-╚═╗│      ├┬┘├─┤├─┘├┤   ├┬┘
-╚═╝└─┘┴└─┴   ┴┴      └─┘┴└─
-
-Powered by:\n
-TG_Overdose
-            """
-
-    params = {'text': text, 'reply_markup': keyboards.main_menu()}
+    # FIXME: Windows/android incorrect align (encoding issue?)
+    msg = ('<pre>'
+           '╔╦╗╔═╗\n'
+           ' ║ ║ ╦          version : 2.1\n'
+           ' ╩ ╚═╝\n'
+           '╔═╗┌─┐┬─┐┌─┐┌─┐┌─┐┬─┐\n'
+           '╚═╗│  ├┬┘├─┤├─┘├┤ ├┬┘\n'
+           '╚═╝└─┘┴└─┴ ┴┴  └─┘┴└─'
+           '</pre>\n\n'
+           'Powered by:\n'
+           '<code>TG_Overdose</code>')
+#     text = f"""
+#     ╔╦╗╔═╗
+#    ║   ║   ╦            version : 2.1
+#    ╩   ╚═╝
+# ╔═╗┌─┐┬─┐┌─┐┌─┐┌─┐┬─┐
+# ╚═╗│      ├┬┘├─┤├─┘├┤   ├┬┘
+# ╚═╝└─┘┴└─┴   ┴┴      └─┘┴└─
+#
+# Powered by:\n
+# TG_Overdose
+#             """
+    params = {'text': msg, 'reply_markup': keyboards.main_menu()}
     if edit:
         await message.edit_text(**params)
     else:
         await message.answer(**params)
     if callback_query:
         await callback_query.answer(text=callback_answer)
+
 
 async def enter_settings(update):
     await states.Settings.main.set()
@@ -69,22 +80,6 @@ async def enter_settings(update):
 
 @dispatcher.message_handler(commands=['start'], state='*')
 async def start(message: Message):
-    data = [
-        {
-            'link': 'https://t.me/BitShibaToken', 'status': 'Active', 'active': 3,
-            'joined': 8, 'kicked': [21, 1, 4, 7], 'users_processed': 843, 'users_added': 343
-        },
-        {
-            'link': 'https://t.me/gjgjjgjgjgj', 'status': 'Processed', 'active': 1,
-            'joined': 12, 'kicked': [4, 7], 'users_processed': 346, 'users_added': 90
-        },
-    ]
-    from urllib.parse import urlsplit
-    url = 'https://t.me/BitShibaToken'
-    u = urlsplit(url)
-
-    msg = ('<a href="{}"><b>{}</b></a>').format(url, u.path.strip('/'))
-    await message.answer(msg, disable_web_page_preview=True)
     await to_main_menu(message)
 
 
@@ -174,7 +169,7 @@ async def add_user_enter_name_back(callback_query: CallbackQuery, state: FSMCont
 
 @dispatcher.callback_query_handler(Text('to_menu'), state=(
         states.AddAccount.api_id, states.AddAccount.api_hash, states.AddAccount.name,
-        states.Accounts.list, states.Settings.main, states.Groups.main
+        states.Accounts.list, states.Settings.main, states.Groups.main, states.Scrape.main,
 ))
 async def on_back_to_menu(callback_query: CallbackQuery, state: FSMContext):
     await state.reset_data()
@@ -395,7 +390,7 @@ async def on_group_delete(callback: CallbackQuery, state: FSMContext):
 @dispatcher.callback_query_handler(Text(['settings_menu', 'back']), state=(
         states.Menu.main, states.ApiConf.main, states.Settings.invites_limit,
         states.Settings.limit_reset, states.Settings.last_seen, states.Settings.join_delay,
-        states.Settings.add_sessions, states.Scrape.main,  None
+        states.Settings.add_sessions, None
 ))
 async def on_settings(callback: CallbackQuery, state: FSMContext):
     await enter_settings(callback)

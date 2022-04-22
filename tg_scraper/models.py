@@ -104,7 +104,6 @@ class Group(Model):
     enabled = fields.BooleanField(default=True)
     is_target = fields.BooleanField(default=False)
     # join_interval = fields.IntField(default=60)
-
     users_count = fields.IntField(null=True)
     details = fields.CharField(max_length=256, null=True)
 

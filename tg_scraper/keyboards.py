@@ -156,7 +156,7 @@ def scrape_menu():
     return [
         [{'text': '✈ Run', 'callback_data': 'start'}],
         # [{'text': '🔁 Run every 24 hours', 'callback_data': 'repeatedly'}],
-        [{'text': '↩ Back', 'callback_data': 'back'}],
+        [{'text': '↩ Back', 'callback_data': 'to_menu'}],
     ]
 
 

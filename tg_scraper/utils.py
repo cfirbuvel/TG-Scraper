@@ -60,8 +60,8 @@ async def session_db_to_string(path):
             return obj.save()
 
 
-def hash_object(obj):
-    string = json.dumps(obj)
+def make_hash(string):
+    # string = json.dumps(obj)
     return hashlib.md5(string.encode('utf8')).hexdigest()
 
 

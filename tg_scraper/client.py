@@ -4,7 +4,7 @@ from telethon.client import TelegramClient
 from telethon.errors.rpcerrorlist import *
 from telethon.tl.functions.contacts import GetBlockedRequest, UnblockRequest
 from telethon.tl.functions.channels import GetParticipantsRequest, DeleteChannelRequest, JoinChannelRequest, \
-    LeaveChannelRequest
+    LeaveChannelRequest, InviteToChannelRequest
 from telethon.tl.types import ChannelParticipantsSearch, ChannelParticipantsRecent
 
 from .utils import relative_sleep
@@ -94,16 +94,22 @@ class CustomTelegramClient(TelegramClient):
             except ChannelsTooMuchError:
                 await self.clear_channels(free_slots=10)
                 continue
-            except ValueError:
-                msg = 'Invalid invite link'
-            except ChannelInvalidError:
-                msg = 'Invalid type (private groups not supported)'
-            else:
-                if group.broadcast:
-                    msg = 'Is channel'
-                else:
-                    return group
-            raise GroupInvalidError(msg)
+            except (ValueError, ChannelInvalidError):
+                return
+            if not group.broadcast:
+                return group
+
+    # TODO: Finish or not finish
+    async def invite_to_channel(self, group, user):
+        added = False
+        try:
+            resp = await self(InviteToChannelRequest(group, [user]))
+        except (InputUserDeactivatedError, UserChannelsTooMuchError,
+                UserNotMutualContactError, UserPrivacyRestrictedError):
+            pass
+        except PeerFloodError:
+            pass
+        # except FloodWaitError as ex:
 
     async def clear_blocked(self):
         limit = 100

@@ -12,10 +12,10 @@ from pprint import pprint
 from aiogram.utils.exceptions import MessageNotModified
 import aioitertools
 from faker import Faker
-import more_itertools
+import humanize
+from more_itertools import first
 from telethon.errors.rpcerrorlist import *
 from telethon.sessions.string import StringSession
-from telethon.tl.functions.account import UpdateProfileRequest
 from telethon.tl.functions.channels import InviteToChannelRequest
 from telethon.tl.functions.help import GetConfigRequest
 from tortoise import timezone
@@ -24,7 +24,7 @@ from tortoise import timezone
 from .bot import bot
 from .models import Account, Group, Settings
 from .client import CustomTelegramClient, GroupInvalidError
-from .utils import relative_sleep, hash_object
+from .utils import relative_sleep, make_hash
 
 
 logger = logging.getLogger(__name__)
@@ -37,8 +37,8 @@ class AccountInvitesEnd(Exception):
 def user_valid(user):
     return not user.bot and not user.deleted
 
-# def user_status_valid(user):
-#     settings = await Settings.get_cached()
+
+# settings = await Settings.get_cached()
 #     filter = settings.last_seen
 #     if filter:
 #         return user_last_seen(user) <= filter
@@ -57,15 +57,14 @@ def user_valid(user):
 #             days_ago = days_map[name]
 #     return days_ago
 
+# async def update_name(client):
+#    fake = Faker()
+#    first_name = fake.first_name()
+#    last_name = fake.last_name()
+#    await client(UpdateProfileRequest(first_name=first_name, last_name=last_name))
 
-async def update_name(client):
-    fake = Faker()
-    first_name = fake.first_name()
-    last_name = fake.last_name()
-    await client(UpdateProfileRequest(first_name=first_name, last_name=last_name))
 
-
-# async def sign_in(client, chat_id, items):
+# def sign_in(client, chat_id, items):
 #     bot = dispatcher.bot
 #     acc = client.account
 #     code = None
@@ -120,74 +119,90 @@ async def update_name(client):
 #     return msg
 
 async def log_details(chat_id, stats, groups):
-    messages = []
+    line_width = 30
+    sep = '⎺' * line_width
+    start = stats['start_time']
+    sent = []
     while True:
-        # new_hash = hash_object(stats)
-        # if new_hash != stats_hash:
-        #     stats_hash = new_hash
+        msgs = []
         total_added = 0
-        # total_processed = 0
-        msg = '<b>Groups</b>\n'
+        total_failed = 0
+        msg = '<b>Groups</b>\n\n'
         for data in groups:
-            link = data['link']
-            name = urlsplit(data['link']).path.strip('/')
-            status = data['status']
-            active = data['active']
-            joined = data['joined']
+            group = data['obj']
+            link = group.link
+            name = group.name
+            if not name:
+                parts = urlsplit(link)
+                name = parts.netloc + parts.path
+            if len(name) > line_width:
+                name = name[:27] + '...'
+            total_added += data['users_added']
+            total_failed += data['users_failed']
+            block = ('<a href="{link}"><b>{name}</b></a>\n'
+                     '<pre>'
+                     '{status}\n'
+                     'Accs:  {active: >4} active {joined: >4} joined\n')
             kicked = len(data['kicked'])
-            added = data['users_added']
-            total_added += added
-            processed = data['users_processed']
-            # total_processed += processed
-            text = (f'\n<a href="{link}"><b>{name}</b></a>      [ {status} ]\n'
-                    f'<b>{active}</b> active accounts, <b>{joined}</b> joined, <b>{kicked}</b> kicked\n'
-                    f'<b>{processed}</b> users processed, <b>{added}</b> added')
-            msg += text
-        msg += ('\n\n<b>Total</b>\n\n'
-                '<b>{total}</b> accounts total, <b>{active}</b> active, <b>{finished}</b> finished\n'
-                '<b>{not_authed}</b> not authenticated, <b>{deactivated}</b> deactivated\n\n'
-                '<b>{total_added}</b> users added').format(total_added=total_added, **stats)
-        logs = '<b>Logs</b>\n\n' + '\n'.join(stats['logs'])
-        try:
-            if not messages:
-                messages.append(await bot.send_message(chat_id, msg, disable_web_page_preview=True))
-                await relative_sleep(1.5)
-                messages.append(await bot.send_message(chat_id, logs, disable_web_page_preview=True))
+            if kicked:
+                block += '       {: >4} kicked\n'.format(kicked)
+            block += ('Users: {users_added: >4} added {users_failed: >5} failed\n'
+                      '{sep}'
+                      '</pre>\n')
+            block = block.format(link=link, name=name, sep=sep, **data)
+            if len(msg) + len(block) > 4096:
+                msgs.append(msg)
+                msg = ''
+            msg += block
+        msgs.append(msg)
+        msg = ('<b>Overall</b>\n\n'
+               '<pre>'
+               'Accs:\n'
+               '{active: >6} active {total: >9} total\n'
+               '{finished: >6} finished {flood_wait: >7} flood\n'
+               '{not_authed: >6} unauthed {deactivated: >7} banned\n'
+               'Users:\n'
+               '{total_added: >6} added {total_failed: >10} failed\n'
+               '{sep}'
+               '</pre>\n').format(sep=sep, total_added=total_added, total_failed=total_failed, **stats)
+        msgs.append(msg)
+        # loader = '▇▇▆▆▅▅▄▄▃▃▂▂▁▁'
+        # frame = list(frame)
+        # while True:
+        #     yield ''.join(frame)
+        #     frame.insert(0, frame.pop())
+        # TODO: loader
+        running_for = humanize.precisedelta(time.time() - start, minimum_unit='minutes', format='%d')
+        logs = stats['logs']
+        if logs:
+            msg = '<b>Logs</b>\n\n'
+            for entry in logs:
+                entry = '<i>‣ {}</i>\n'.format(entry)
+                if len(msg) + len(entry) > 4096:
+                    msgs.append(msg)
+                    msg = ''
+                msg += entry
+            msgs.append(msg)
+        for i, msg in enumerate(msgs):
+            hash = make_hash(msg)
+            try:
+                msg_id, prev_hash = sent[i]
+            except IndexError:
+                resp = await bot.send_message(chat_id, msg, disable_web_page_preview=True)
+                sent.append((resp.message_id, hash))
             else:
-                await messages[0].edit_text(msg, disable_web_page_preview=True)
-                await relative_sleep(1.5)
-                await messages[1].edit_text(logs, disable_web_page_preview=True)
-        except MessageNotModified:  # FIXME
-            pass
-        await relative_sleep(2.5)  # 0.55 per message
-    # while True:
-    #     accounts = []
-    #     for phone, stats in stats['accounts'].items():
-    #         total_added = stats['added']
-    #         total_added += total_added
-    #         # TODO: Int statuses for elaborate total stats
-    #         log = '<b>{}:</b> ⌞{}⌟ {}/{} added'.format(phone, stats['status'], total_added, stats['max'])
-    #         accounts.append(log)
-    #     groups = []
-    #     for stats in stats['groups'].items():
-    #         log = '<b>{link}:</b> ⌞{status}⌟ {users_added}/{users} added, {joined} accounts joined, {kicked} kicked'.format(**stats)
-    #         groups.append(log)
-    #     accounts = '\n'.join(accounts)
-    #     if not accounts_msg:
-    #         accounts_msg = await bot.send_message(chat_id, accounts)
-    #     else:
-    #         await accounts_msg.edit_text(accounts)
-    #     groups = '\n'.join(groups)
-    #     if not groups_msg:
-    #         groups_msg = await bot.send_message(chat_id, groups)
-    #     else:
-    #         await groups_msg.edit_text(groups)
-    #     await asyncio.sleep(1)
+                if hash == prev_hash:
+                    continue
+                resp = await bot.edit_message_text(msg, chat_id, msg_id, disable_web_page_preview=True)
+                sent[i] = (resp.message_id, hash)
+            await asyncio.sleep(1)
+        await asyncio.sleep(0.4)
 
 
-async def worker(accounts, groups, target_group, processed, lock: asyncio.Lock, stats):
+async def worker(accounts, groups, group_q, target_group, processed, lock: asyncio.Lock, stats):
     settings = await Settings.get_cached()
     for acc in accounts:
+        # TODO: Maybe wrap block in a function again
         session = StringSession(acc.session_string)
         try:
             stats['active'] += 1
@@ -198,10 +213,10 @@ async def worker(accounts, groups, target_group, processed, lock: asyncio.Lock, 
                     try:
                         target = await client.join_group(target_group.link)
                     except ChannelPrivateError:
-                        logs.append('`{}` banned from target group.'.format(acc.phone))
+                        logs.append('<code>{}</code> banned from target group.'.format(acc.phone))
                         continue
-                    except GroupInvalidError as ex:
-                        msg = '⚠ <b>Target group:</b> {}.'.format(ex.msg)
+                    if not target:
+                        msg = '<b>Target group type or link is not valid.</b>'
                         if msg not in logs:
                             logs.append(msg)
                         return
@@ -225,31 +240,35 @@ async def worker(accounts, groups, target_group, processed, lock: asyncio.Lock, 
                     await relative_sleep(5)
                     acc_id = acc.id
                     while True:
-                        if not groups:
+                        if not any(item['status'] == 'Processing' for item in groups):
                             return
+                        group = await group_q.get()
+                        if acc_id in group['kicked']:
+                            group_q.put_nowait(group)
+                            continue
+                        ts = group['join_ts']
+                        wait = ts + settings.join_interval - time.time()
+                        if wait > 0:
+                            await relative_sleep(wait)
+                        group_obj = group['obj']
                         try:
-                            data = more_itertools.first(filter(lambda x: acc_id not in x[1]['kicked'], groups))
-                        except ValueError:
-                            logs.append('✕ `{}` banned from all source groups.'.format(acc.phone))
-                            break
-                        join_reset, group = data
-                        data[0] = max(join_reset, time.time()) + settings.join_interval
-                        groups.sort(key=itemgetter(0))
-                        wait_secs = join_reset - time.time()
-                        if wait_secs > 0:
-                            await relative_sleep(wait_secs)
-                        try:
-                            source = await client.join_group(group['link'])
+                            source = await client.join_group(group_obj.link)
                         except ChannelPrivateError:
                             group['kicked'].append(acc_id)
+                            if all(acc_id in item['kicked'] for item in groups if item['status'] == 'Processing'):
+                                logs.append('<code>{}</code> banned from all source groups.'.format(acc.phone))
+                                break
+                            group_q.put_nowait(group)
                             continue
-                        except GroupInvalidError as ex:
-                            groups.remove(data)
-                            group['status'] = '⚠ {}'.format(ex.msg)
+                        if not source:
+                            group['status'] = '❗ Invalid group type or link'
                             continue
-                        else:
-                            group['active'] += 1
-                            group['joined'] += 1
+                        group['join_ts'] = time.time()
+                        group_obj.name = source.title
+                        await group_obj.save()
+                        group['active'] += 1
+                        group['joined'] += 1
+                        group_q.put_nowait(group)
                         offset = 0
                         # TODO: Store processed in database of kind
                         while True:
@@ -259,30 +278,28 @@ async def worker(accounts, groups, target_group, processed, lock: asyncio.Lock, 
                             #     logger.info(e)
                             #     return
                             if not users:
-                                groups.remove(data)
-                                group['status'] = 'Processed'
+                                group['status'] = 'Over'
                                 group['active'] -= 1
                                 break
                                 # TODO: Group status check in users loop and break on not "Active"? (if group users are same for every acc)
-                                # if all(item['status'] != 'Active' for item in groups):
-                                #     return
                             for user in users:
                                 id = user.id
                                 async with lock:
                                     if not user_valid(user) or id in processed:
                                         continue
+                                    added = False
                                     try:
                                         resp = await client(InviteToChannelRequest(target, [user]))
                                     except (InputUserDeactivatedError, UserChannelsTooMuchError,
-                                            UserNotMutualContactError, UserPrivacyRestrictedError,
-                                            PeerFloodError):
-                                        added = False
+                                            UserNotMutualContactError, UserPrivacyRestrictedError):
+                                        pass
+                                    except PeerFloodError:
+                                        await asyncio.sleep(random.randint(60, 120))
+                                        continue
                                     # except FloodWaitError as ex:
                                         # TODO: logic for flood wait (end for now)
-                                        # await asyncio.sleep(ex.seconds)
-                                        # continue
                                     else:
-                                        added = bool(resp.users)
+                                        added = len(resp.users)
                                     processed.add(id)
                                 if added:
                                     group['users_added'] += 1
@@ -291,9 +308,11 @@ async def worker(accounts, groups, target_group, processed, lock: asyncio.Lock, 
                                         acc.sleep_until = timezone.now() + datetime.timedelta(days=settings.invites_reset_after)
                                         await acc.save()
                                         group['active'] -= 1
+                                        stats['finished'] += 1
                                         raise AccountInvitesEnd()
                                     await acc.save()
-                                        # TODO: Batch invite?
+                                else:
+                                    group['users_failed'] += 1
                                 await asyncio.sleep(random.randint(60, 120))
                             await relative_sleep(0.35)
                             offset += len(users)
@@ -306,119 +325,54 @@ async def worker(accounts, groups, target_group, processed, lock: asyncio.Lock, 
             acc.deactivated = True
             await acc.save()
         except FloodWaitError as ex:
+            print('Debug FloodWaitError: {} seconds.'.format(ex.seconds))
             stats['flood_wait'] += 1
             acc.sleep_until = timezone.now() + datetime.timedelta(seconds=ex.seconds)
             await acc.save()
             # TODO
         except AccountInvitesEnd:
-            stats['finished'] += 1
+            pass
         finally:
             stats['active'] -= 1
 
 
-async def scrape(chat_id):
-    await bot.send_message(chat_id, 'Task started. You can stop it at any moment with /stop command.')
+async def main(chat_id):
+    await bot.send_message(chat_id, 'Task started.')
     accounts = await Account.filter(deactivated=False, authenticated=True, invites__gt=0)
     sources = await Group.filter(enabled=True, is_target=False)
     target = await Group.get(is_target=True)
     # invites_max = sum(acc.invites for acc in accounts)
     stats = {
-        'total': len(accounts), 'active': 0, 'finished': 0, 'not_authed': 0,
-        'deactivated': 0, 'flood_wait': 0, 'logs': []
+        'total': len(accounts), 'active': 0, 'finished': 0, 'flood_wait': 0,
+        'not_authed': 0, 'deactivated': 0, 'logs': [], 'start_time': time.time()
     }
     groups = []
-    groups_q = []
+    group_q = asyncio.Queue()
     for group in sources:
         item = {
-            'link': group.link, 'status': 'Active', 'active': 0, 'joined': 0,
-            'kicked': [], 'users_processed': 0, 'users_added': 0
+            'obj': group, 'status': 'Processing', 'active': 0, 'joined': 0,
+            'kicked': [], 'users_failed': 0, 'users_added': 0, 'join_ts': 0
         }
         groups.append(item)
-        groups_q.append([0, item])
-    # stats['groups'] = all_groups
+        group_q.put_nowait(item)
     accounts = iter(accounts)
     lock = asyncio.Lock()
     processed = set()
-    num_workers = 16
+    num_workers = 18
     tasks = []
     for i in range(num_workers):
-        task = asyncio.create_task(worker(accounts, groups_q, target, processed, lock, stats), name=str(i))
+        task = asyncio.create_task(worker(accounts, groups, group_q, target, processed, lock, stats), name=str(i))
         tasks.append(task)
     log_task = asyncio.create_task(log_details(chat_id, stats, groups))
     tasks.append(log_task)
-    res = await asyncio.gather(*tasks)
-
-            # parts.append(text)
-        # msg = '\n⎻⎻⎻⎻⎻⎻⎻⎻⎻⎻⎻⎻⎻⎻\n'.join(parts)
-    # log_task = asyncio.create_task(run_log(chat_id, stats))
-    # await asyncio.gather(log_task, *tasks)
+    await asyncio.gather(*tasks)
 
 
-# async def scrape(chat_id, items: asyncio.Queue):
-#     bot = dispatcher.bot
-#     await bot.send_message(chat_id, 'Task started. You can stop it at any moment with /stop command.')
-#     accounts = list(await Account.filter(auto_created=True, invites_sent__lt=F('invites_max')))
-#     max_invites = sum(acc.invites_left for acc in accounts)
-#     accs_loaded = len(accounts)
-#     await states.Scrape.add_limit.set()
-#     msg = 'Please enter max number of users to add, <b>{} max</b>.'.format(max_invites)
-#     await bot.send_message(chat_id, msg, reply_markup=keyboards.max_btn(max_invites))
-#     limit = await items.get()
-#     items.task_done()
-#     limit = min(max_invites, limit)
-#     target = await Group.get(is_target=True)
-#     sources = await Group.filter(enabled=True, is_target=False)
-#     state = RunState(limit)
-#     tasks = []
-#     task_name = str(chat_id)
-#     for group in sources:
-#         task = asyncio.create_task(worker(accounts, target, group, state, settings), name=task_name)
-#         tasks.append(task)
-#     animation = animation_frames()
-#     logs = []
-#     message = None
-#     while tasks:
-#         done, tasks = await asyncio.wait(tasks, timeout=1, return_when=asyncio.FIRST_COMPLETED)
-#         for task in done:
-#             msg = task.result()
-#             if msg and msg not in logs:
-#                 logs.append(msg)
-#         if not tasks:
-#             status = '☘ Completed ☘'
-#         else:
-#             status = 'Running tasks'
-#         msg = ('<b>{status}</b>\n\n'
-#                'Tasks (groups): {tasks}\n'
-#                'Sessions: {accs_used}/{accs_total}\n'
-#                'Users processed: {processed}\n'
-#                'Users added: {added}\n\n'
-#                '{loading}\n\n'
-#                '<i>Logs:</i>\n\n'
-#                '{logs}\n').format(
-#             status=status,
-#             tasks=len(tasks),
-#             accs_used=accs_loaded - len(accounts),
-#             accs_total=accs_loaded,
-#             processed=len(state.users_processed),
-#             added=state.added,
-#             loading=next(animation),
-#             logs='\n'.join(logs)
-#         )
-#         if not message:
-#             message = await bot.send_message(chat_id, msg, disable_web_page_preview=True)
-#         else:
-#             message = await message.edit_text(msg, disable_web_page_preview=True)
-#     await states.Menu.main.set()
-#     await bot.send_message(chat_id, 'Main', reply_markup=keyboards.main_menu())
-#     # TODO: Cancel handler with message
-
-
-def animation_frames():
-    frame = '▂▂▃▃▄▄▅▅▆▆▇▇██▇▇▆▆▅▅▄▄▃▃▂▂▁▁'
-    frame = list(frame)
-    while True:
-        yield ''.join(frame)
-        frame.insert(0, frame.pop())
+async def scrape(chat_id):
+    try:
+        await main(chat_id)
+    except asyncio.CancelledError:
+        await bot.send_message(chat_id, 'Task cancelled.')
 
 
 async def show_loading(message):
